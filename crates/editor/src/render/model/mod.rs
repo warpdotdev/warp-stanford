@@ -1251,6 +1251,7 @@ pub struct ParagraphStyles {
     pub baseline_ratio: f32,
     /// Fixed-width tab stop size in spaces (intended only for fully monospace paragraphs).
     pub fixed_width_tab_size: Option<u8>,
+    pub disable_ligatures: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -4389,6 +4390,7 @@ impl ParagraphStyles {
             line_height_ratio: self.line_height_ratio,
             baseline_ratio: self.baseline_ratio,
             fixed_width_tab_size: self.fixed_width_tab_size,
+            disable_ligatures: self.disable_ligatures,
         }
     }
 
@@ -4409,6 +4411,7 @@ impl ParagraphStyles {
             || self.font_weight != new_styles.font_weight
             || self.font_family != new_styles.font_family
             || self.fixed_width_tab_size != new_styles.fixed_width_tab_size
+            || self.disable_ligatures != new_styles.disable_ligatures
     }
 }
 

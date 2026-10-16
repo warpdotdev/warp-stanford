@@ -2,6 +2,7 @@ use std::any::Any;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::ops::Range;
+use std::ptr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -9,14 +10,19 @@ use anyhow::{Result, anyhow, bail};
 use core_foundation::array::{CFArray, CFArrayRef};
 use core_foundation::base::{CFEqual, CFHash, CFType, CFTypeRef, ItemRef, TCFType};
 use core_foundation::dictionary::CFDictionary;
+use core_foundation::number::CFNumber;
 use core_foundation::string::{CFString, CFStringRef, UniChar};
+use core_graphics::base::CGFloat;
 use core_graphics::display::CGSize;
 use core_graphics::font::{CGFont, CGGlyph};
-use core_text::font::{CTFont, cascade_list_for_languages as ct_cascade_list_for_languages};
+use core_graphics::geometry::CGAffineTransform;
+use core_text::font::{
+    CTFont, CTFontRef, cascade_list_for_languages as ct_cascade_list_for_languages,
+};
 use core_text::font_descriptor::{
-    CTFontDescriptor, CTFontDescriptorCopyAttribute, SymbolicTraitAccessors, TraitAccessors,
-    kCTFontFamilyNameAttribute, kCTFontLanguagesAttribute, kCTFontNameAttribute,
-    kCTFontOrientationHorizontal,
+    CTFontDescriptor, CTFontDescriptorCopyAttribute, CTFontDescriptorRef, SymbolicTraitAccessors,
+    TraitAccessors, kCTFontFamilyNameAttribute, kCTFontFeatureSettingsAttribute,
+    kCTFontLanguagesAttribute, kCTFontNameAttribute, kCTFontOrientationHorizontal,
 };
 use core_text::{font, font_collection, font_descriptor};
 use dashmap::DashMap;
@@ -187,6 +193,7 @@ pub struct FontDB {
     rasterizer: Rasterizer,
     font_names: DashMap<FontId, Arc<String>>,
     native_fonts: DashMap<(FontId, OrderedFloat<f32>), NativeFont>,
+    native_fonts_without_ligatures: DashMap<(FontId, OrderedFloat<f32>), NativeFont>,
     cgfont_to_id: DashMap<CGFontKey, FontId>,
     fallback_fonts: DashMap<FontId, Arc<Vec<FontId>>>,
     metrics: DashMap<FontId, Metrics>,
@@ -235,6 +242,46 @@ fn space_advance_width(font: &CTFont) -> Option<f64> {
     (width.is_finite() && width > 0.0).then_some(width)
 }
 
+unsafe extern "C" {
+    fn CTFontCreateCopyWithAttributes(
+        font: CTFontRef,
+        size: CGFloat,
+        matrix: *const CGAffineTransform,
+        attributes: CTFontDescriptorRef,
+    ) -> CTFontRef;
+}
+
+/// Copies `font` with the OpenType `liga` and `calt` features turned off. Copying, rather than
+/// creating a font from a descriptor (which may resolve to a different font with the same name),
+/// keeps the same CGFont, so laid-out runs still map to the same [`FontId`].
+fn copy_without_ligatures(font: &CTFont) -> CTFont {
+    let disabled_features = ["liga", "calt"].map(|tag| {
+        CFDictionary::from_CFType_pairs(&[
+            (
+                CFString::new("CTFeatureOpenTypeTag"),
+                CFString::new(tag).as_CFType(),
+            ),
+            (
+                CFString::new("CTFeatureOpenTypeValue"),
+                CFNumber::from(0).as_CFType(),
+            ),
+        ])
+    });
+    let attributes = CFDictionary::from_CFType_pairs(&[(
+        unsafe { CFString::wrap_under_get_rule(kCTFontFeatureSettingsAttribute) },
+        CFArray::from_CFTypes(&disabled_features).as_CFType(),
+    )]);
+    let descriptor = font_descriptor::new_from_attributes(&attributes);
+    unsafe {
+        CTFont::wrap_under_create_rule(CTFontCreateCopyWithAttributes(
+            font.as_concrete_TypeRef(),
+            font.pt_size(),
+            ptr::null(),
+            descriptor.as_concrete_TypeRef(),
+        ))
+    }
+}
+
 /// A hashable, comparable key wrapping a [`CGFont`].
 ///
 /// [`CGFont`] is a Core Foundation object without Rust [`Hash`]/[`Eq`], so we key on its Core Foundation
@@ -271,6 +318,7 @@ impl FontDB {
             rasterizer: Rasterizer::new(),
             font_names: Default::default(),
             native_fonts: Default::default(),
+            native_fonts_without_ligatures: Default::default(),
             cgfont_to_id: Default::default(),
             fallback_fonts: Default::default(),
             metrics: Default::default(),
@@ -476,6 +524,19 @@ impl FontDB {
                         .native_font()
                         .clone_with_font_size(size as f64),
                 )
+                .clone(),
+        }
+    }
+
+    /// Like [`Self::native_font`], but with the font's ligature substitutions turned off.
+    pub fn native_font_without_ligatures(&self, font_id: FontId, size: f32) -> NativeFont {
+        match self
+            .native_fonts_without_ligatures
+            .entry((font_id, OrderedFloat(size)))
+        {
+            Entry::Occupied(entry) => entry.get().clone(),
+            Entry::Vacant(entry) => entry
+                .insert(copy_without_ligatures(&self.native_font(font_id, size)))
                 .clone(),
         }
     }
