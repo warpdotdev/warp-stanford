@@ -117,6 +117,7 @@ use crate::settings::{
 use crate::settings_view::flags;
 use crate::suggestions::ignored_suggestions_model::{IgnoredSuggestionsModel, SuggestionType};
 use crate::terminal::grid_size_util::grid_cell_dimensions;
+use crate::terminal::ligature_settings::should_use_ligature_rendering;
 use crate::terminal::model::block::BlockId;
 use crate::themes::theme::Fill;
 use crate::ui_components::avatar::{Avatar, AvatarContent};
@@ -2945,6 +2946,10 @@ impl EditorView {
             line_height: self.line_height(font_cache, appearance),
             line_height_ratio: self.line_height_ratio(appearance),
             em_width: self.em_width(font_cache, appearance),
+            // The ligature setting governs the monospace (terminal) font; editors using another
+            // font, such as UI text fields, keep that font's standard ligatures.
+            disable_ligatures: self.font_family(appearance) == appearance.monospace_font_family()
+                && !should_use_ligature_rendering(ctx),
 
             autogrow: self.autogrow,
             is_empty: self.is_empty(ctx),

@@ -73,6 +73,7 @@ pub struct ViewSnapshot {
     pub line_height: f32,
     pub line_height_ratio: f32,
     pub em_width: f32,
+    pub disable_ligatures: bool,
 
     pub autogrow: bool,
     pub is_empty: bool,
@@ -226,6 +227,7 @@ impl ViewSnapshot {
                     line_height_ratio: self.line_height_ratio,
                     baseline_ratio: DEFAULT_TOP_BOTTOM_RATIO,
                     fixed_width_tab_size: None,
+                    disable_ligatures: self.disable_ligatures,
                 },
                 &[(
                     0..text.chars().count(),
@@ -260,6 +262,7 @@ impl ViewSnapshot {
                             line_height_ratio: self.line_height_ratio,
                             baseline_ratio: DEFAULT_TOP_BOTTOM_RATIO,
                             fixed_width_tab_size: None,
+                            disable_ligatures: self.disable_ligatures,
                         },
                         &[(
                             0..line.chars().count(),
@@ -532,6 +535,7 @@ impl ViewSnapshot {
                         line_height_ratio,
                         baseline_ratio: DEFAULT_TOP_BOTTOM_RATIO,
                         fixed_width_tab_size: None,
+                        disable_ligatures: self.disable_ligatures,
                     },
                     &style_runs,
                     max_width,
@@ -585,6 +589,7 @@ impl ViewSnapshot {
                 line_height_ratio: self.line_height_ratio,
                 baseline_ratio: DEFAULT_TOP_BOTTOM_RATIO,
                 fixed_width_tab_size: None,
+                disable_ligatures: self.disable_ligatures,
             },
             &[(
                 0..self.line_len(row, app)? as usize,
