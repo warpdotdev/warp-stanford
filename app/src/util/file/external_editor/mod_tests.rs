@@ -280,6 +280,8 @@ fn test_editor_try_from_supported_editors() {
         Ok(Editor::VSCodeInsiders)
     );
 
+    assert_eq!(Editor::try_from("codium"), Ok(Editor::VSCodium));
+
     // Test Zed variants
     assert_eq!(Editor::try_from("zed"), Ok(Editor::Zed));
     assert_eq!(Editor::try_from("zed-preview"), Ok(Editor::ZedPreview));

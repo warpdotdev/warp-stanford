@@ -55,6 +55,7 @@ impl OpenFileInEditorMethod {
 impl<'a> Editor {
     const VSCODE_IDENTIFIER: &'a str = "com.microsoft.VSCode";
     const VSCODE_INSIDERS_IDENTIFIER: &'a str = "com.microsoft.VSCodeInsiders";
+    const VSCODIUM_IDENTIFIER: &'a str = "com.vscodium";
     const PYCHARM_CE_IDENTIFIER: &'a str = "com.jetbrains.pycharm.ce";
     const INTELLIJ_CE_IDENTIFIER: &'a str = "com.jetbrains.intellij.ce";
     const CLION_CE_IDENTIFIER: &'a str = "com.jetbrains.clion.ce";
@@ -89,6 +90,7 @@ impl<'a> Editor {
         match app_identifier {
             Editor::VSCODE_IDENTIFIER => Some(Editor::VSCode),
             Editor::VSCODE_INSIDERS_IDENTIFIER => Some(Editor::VSCodeInsiders),
+            Editor::VSCODIUM_IDENTIFIER => Some(Editor::VSCodium),
             Editor::PYCHARM_CE_IDENTIFIER => Some(Editor::PyCharmCE),
             Editor::PYCHARM_IDENTIFIER => Some(Editor::PyCharm),
             Editor::INTELLIJ_CE_IDENTIFIER => Some(Editor::IntelliJCE),
@@ -119,6 +121,7 @@ impl<'a> Editor {
         ctx.application_bundle_info(match self {
             Editor::VSCode => Editor::VSCODE_IDENTIFIER,
             Editor::VSCodeInsiders => Editor::VSCODE_INSIDERS_IDENTIFIER,
+            Editor::VSCodium => Editor::VSCODIUM_IDENTIFIER,
             Editor::PyCharmCE => Editor::PYCHARM_CE_IDENTIFIER,
             Editor::PyCharm => Editor::PYCHARM_IDENTIFIER,
             Editor::IntelliJCE => Editor::INTELLIJ_CE_IDENTIFIER,
@@ -168,6 +171,10 @@ impl<'a> Editor {
                     "vscode-insiders://file{}",
                     full_path_with_line_column
                 )],
+            ),
+            Editor::VSCodium => (
+                OpenFileInEditorMethod::AppUrl(None),
+                vec![format!("vscodium://file{}", full_path_with_line_column)],
             ),
             Editor::Windsurf => (
                 OpenFileInEditorMethod::AppUrl(None),

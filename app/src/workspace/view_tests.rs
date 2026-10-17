@@ -5273,6 +5273,42 @@ fn test_new_tab_in_group_expands_collapsed_group_member_active() {
 }
 
 #[test]
+fn test_restored_workspace_keeps_tab_group_collapsed() {
+    // Regression for #16196: collapsed tab groups came back expanded after a restore.
+    let _grouped_tabs_guard = FeatureFlag::GroupedTabs.override_enabled(true);
+
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+
+        let workspace = mock_workspace(&mut app);
+        let (group_id, snapshot) = workspace.update(&mut app, |workspace, ctx| {
+            workspace.handle_action(
+                &WorkspaceAction::SelectNewSessionMenuItem(NewSessionMenuItem::CreateNewTabGroup),
+                ctx,
+            );
+            let group_id = workspace.tabs[0]
+                .group_id
+                .expect("new group's tab should be first");
+            workspace.handle_action(&WorkspaceAction::NewTabInGroup(group_id), ctx);
+            workspace.handle_action(&WorkspaceAction::ToggleTabGroupCollapsed(group_id), ctx);
+            assert!(workspace.tab_groups[&group_id].collapsed);
+
+            (group_id, workspace.snapshot(ctx.window_id(), false, ctx))
+        });
+
+        let restored = restored_workspace(&mut app, snapshot);
+        restored.read(&app, |workspace, _| {
+            let group_ids: Vec<_> = workspace.tabs.iter().map(|tab| tab.group_id).collect();
+            assert_eq!(group_ids, [Some(group_id), Some(group_id), None]);
+            assert!(
+                workspace.tab_groups[&group_id].collapsed,
+                "group should stay collapsed after restore"
+            );
+        });
+    });
+}
+
+#[test]
 fn test_pin_unpin_ungrouped_tab_moves_to_and_from_boundary() {
     let _pinned_guard = FeatureFlag::PinnedTabs.override_enabled(true);
 

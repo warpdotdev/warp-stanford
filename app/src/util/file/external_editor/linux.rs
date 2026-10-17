@@ -472,6 +472,7 @@ impl Editor {
             Sublime => Some(&["sublime-text_subl", "sublime_text"]),
             VSCode => Some(&["code"]),
             VSCodeInsiders => Some(&["code-insiders"]),
+            VSCodium => Some(&["codium"]),
             WebStorm => Some(&["webstorm", "jetbrains-webstorm"]),
             Windsurf => Some(&["windsurf"]),
             Zed => Some(&["dev.zed.Zed"]),
@@ -540,6 +541,15 @@ impl Editor {
                     "vscode-insiders://file{}{suffix}",
                     file_path.display()
                 ));
+                Some(command)
+            }
+            VSCodium => {
+                let suffix = line_column_number
+                    .as_ref()
+                    .map(LineAndColumnArg::to_string_suffix)
+                    .unwrap_or_default();
+                let mut command = Command::new("xdg-open");
+                command.arg(format!("vscodium://file{}{suffix}", file_path.display()));
                 Some(command)
             }
             Windsurf => {

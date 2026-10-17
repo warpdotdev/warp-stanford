@@ -142,6 +142,22 @@ impl Editor {
                     "{A5270FC5-65AD-483E-AC30-2C276B63D0AC}_is1",
                 ]
             }
+            Editor::VSCodium => {
+                &[
+                    // 64-bit version of VSCodium (system)
+                    "{88DA3577-054F-4CA1-8122-7D820494CFFB}_is1",
+                    // 64-bit version of VSCodium (user)
+                    "{2E1F05D1-C245-4562-81EE-28188DB6FD17}_is1",
+                    // ARM64 version of VSCodium (system)
+                    "{67DEE444-3D04-4258-B92A-BC1F0FF2CAE4}_is1",
+                    // ARM64 version of VSCodium (user)
+                    "{57FD70A5-1B8D-4875-9F40-C5553F094828}_is1",
+                    // 32-bit version of VSCodium (system)
+                    "{763CBF88-25C6-4B10-952F-326AE657F16B}_is1",
+                    // 32-bit version of VSCodium (user)
+                    "{0FD05EB4-651E-4E78-A062-515204B47A3A}_is1",
+                ]
+            }
             Editor::Cursor => &["62625861-8486-5be9-9e46-1da50df5f8ff"],
             Editor::Windsurf => &["{5A8B7D94-9B5F-4D1F-93FC-5609F7159349}_is1"],
             _ => &[],
@@ -152,6 +168,9 @@ impl Editor {
         match self {
             Editor::VSCode => Some(ExecutableLocationMethod::InstallLocation {
                 path_to_executable: Path::new("bin").join("code.exe"),
+            }),
+            Editor::VSCodium => Some(ExecutableLocationMethod::InstallLocation {
+                path_to_executable: Path::new("bin").join("codium.exe"),
             }),
             Editor::Windsurf => Some(ExecutableLocationMethod::InstallLocation {
                 path_to_executable: Path::new("bin").join("windsurf.exe"),
@@ -174,6 +193,15 @@ impl Editor {
                     .map(LineAndColumnArg::to_string_suffix)
                     .unwrap_or_default();
                 command.arg(format!("vscode://file/{}{suffix}", full_path.display()));
+                command
+            }
+            Editor::VSCodium => {
+                let mut command = Command::new("explorer.exe");
+                let suffix = line_column_number
+                    .as_ref()
+                    .map(LineAndColumnArg::to_string_suffix)
+                    .unwrap_or_default();
+                command.arg(format!("vscodium://file/{}{suffix}", full_path.display()));
                 command
             }
             Editor::Cursor => {

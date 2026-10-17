@@ -18,6 +18,7 @@ pub use self::settings::{EditorLayout, EditorSettings};
 pub const SUPPORTED_EDITORS: &[Editor] = &[
     Editor::VSCode,
     Editor::VSCodeInsiders,
+    Editor::VSCodium,
     Editor::Atom,
     Editor::CLion,
     Editor::CLionCE,
@@ -74,6 +75,7 @@ pub const SUPPORTED_EDITORS: &[Editor] = &[
 pub enum Editor {
     VSCode,
     VSCodeInsiders,
+    VSCodium,
     PyCharm,
     PyCharmCE,
     IntelliJ,
@@ -113,6 +115,7 @@ impl std::fmt::Display for Editor {
             match self {
                 Editor::VSCode => "VSCode",
                 Editor::VSCodeInsiders => "VSCode Insiders",
+                Editor::VSCodium => "VSCodium",
                 Editor::PyCharm => "PyCharm",
                 Editor::PyCharmCE => "PyCharm Community Edition",
                 Editor::IntelliJ => "IntelliJ",
@@ -162,6 +165,7 @@ impl TryFrom<&str> for Editor {
         match editor_base.as_str() {
             "code" => Ok(Editor::VSCode),
             "code-insiders" => Ok(Editor::VSCodeInsiders),
+            "codium" => Ok(Editor::VSCodium),
             "zed" => Ok(Editor::Zed),
             "zed-preview" => Ok(Editor::ZedPreview),
             "cursor" => Ok(Editor::Cursor),
