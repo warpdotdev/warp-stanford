@@ -1556,7 +1556,7 @@ impl LocalCodeEditorView {
         // Enable and start the LSP server via PersistedWorkspace
         let path = path.to_path_buf();
         PersistedWorkspace::handle(ctx).update(ctx, |workspace, ctx| {
-            workspace.enable_lsp_server_for_path(&repo_root, lsp_server_type);
+            workspace.enable_lsp_server_for_path(&repo_root, lsp_server_type, ctx);
             workspace.execute_lsp_task(LspTask::Spawn { file_path: path }, ctx);
         });
     }

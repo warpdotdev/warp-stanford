@@ -986,8 +986,8 @@ impl InitStepBlock {
                         ctx
                     );
 
-                    PersistedWorkspace::handle(ctx).update(ctx, |workspace, _| {
-                        workspace.enable_lsp_server_for_path(&repo_root, server_type);
+                    PersistedWorkspace::handle(ctx).update(ctx, |workspace, ctx| {
+                        workspace.enable_lsp_server_for_path(&repo_root, server_type, ctx);
                     });
 
                     ToastStack::handle(ctx).update(ctx, |toast_stack, ctx| {
@@ -1099,8 +1099,8 @@ impl TypedActionView for InitStepBlock {
                 // Separate installed servers from those needing installation
                 for info in server_info {
                     if info.is_installed {
-                        PersistedWorkspace::handle(ctx).update(ctx, |workspace, _| {
-                            workspace.enable_lsp_server_for_path(&repo_root, info.server_type);
+                        PersistedWorkspace::handle(ctx).update(ctx, |workspace, ctx| {
+                            workspace.enable_lsp_server_for_path(&repo_root, info.server_type, ctx);
                         });
                         enabled_servers.push(info.server_type);
                     } else {
