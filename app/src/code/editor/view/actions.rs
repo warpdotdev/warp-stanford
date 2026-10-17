@@ -619,6 +619,8 @@ pub fn init(app: &mut AppContext) {
 pub enum CodeEditorViewAction {
     UserTyped(UserInput<String>),
     VimUserTyped(UserInput<String>),
+    SetMarkedText(UserInput<String>),
+    ClearMarkedText,
     Enter,
     Delete,
     Backspace,
@@ -735,6 +737,8 @@ impl CodeEditorViewAction {
         match self {
             Self::UserTyped(_)
             | Self::VimUserTyped(_)
+            | Self::SetMarkedText(_)
+            | Self::ClearMarkedText
             | Self::Enter
             | Self::Delete
             | Self::Backspace
@@ -821,6 +825,8 @@ impl TypedActionView for CodeEditorView {
 
         match action {
             UserTyped(content) => self.user_insert(content, ctx),
+            SetMarkedText(marked_text) => self.set_ime_marked_text(marked_text, ctx),
+            ClearMarkedText => self.clear_ime_marked_text(ctx),
             VimUserTyped(content) => {
                 // Don't handle vim input when the find input is active
                 let allow_vim = match &self.find_bar {
@@ -1189,6 +1195,32 @@ impl RichTextAction<CodeEditorView> for CodeEditorViewAction {
             return None;
         }
         Some(CodeEditorViewAction::VimUserTyped(UserInput::new(chars)))
+    }
+
+    fn ime_set_marked_text(
+        marked_text: String,
+        _selected_range: Range<usize>,
+        view: &WeakViewHandle<CodeEditorView>,
+        ctx: &AppContext,
+    ) -> Option<Self> {
+        let view = view.upgrade(ctx)?;
+        if !view.as_ref(ctx).is_editable(ctx) {
+            return None;
+        }
+        Some(CodeEditorViewAction::SetMarkedText(UserInput::new(
+            marked_text,
+        )))
+    }
+
+    fn ime_clear_marked_text(
+        view: &WeakViewHandle<CodeEditorView>,
+        ctx: &AppContext,
+    ) -> Option<Self> {
+        let view = view.upgrade(ctx)?;
+        if !view.as_ref(ctx).is_editable(ctx) {
+            return None;
+        }
+        Some(CodeEditorViewAction::ClearMarkedText)
     }
 
     fn left_mouse_down(
