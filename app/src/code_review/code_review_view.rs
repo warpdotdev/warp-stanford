@@ -899,8 +899,8 @@ impl CodeReviewView {
             return;
         };
 
-        PersistedWorkspace::handle(ctx).update(ctx, |workspace, _ctx| {
-            workspace.enable_lsp_server_for_path(&repo_root, server_type);
+        PersistedWorkspace::handle(ctx).update(ctx, |workspace, ctx| {
+            workspace.enable_lsp_server_for_path(&repo_root, server_type, ctx);
         });
 
         PersistedWorkspace::handle(ctx).update(ctx, |workspace, ctx| {
