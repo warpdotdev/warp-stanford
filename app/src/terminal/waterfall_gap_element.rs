@@ -132,6 +132,27 @@ impl WaterfallGapElement {
             false
         }
     }
+
+    fn right_mouse_down(&self, position: Vector2F, ctx: &mut EventContext) -> bool {
+        // Parents pass mouse events to every child, so in a split layout this element also
+        // receives right-clicks made in other panes. Only open the menu for clicks inside it.
+        if self
+            .bounds()
+            .expect("Bounds should be set before event dispatching")
+            .contains_point(position)
+        {
+            let position_in_terminal_view =
+                position - self.origin().expect("origin set after paint").xy();
+            ctx.dispatch_typed_action(TerminalAction::BlockListContextMenu(
+                BlockListMenuSource::OutsideBlockRightClick {
+                    position_in_terminal_view,
+                },
+            ));
+            true
+        } else {
+            false
+        }
+    }
 }
 
 impl Element for WaterfallGapElement {
@@ -240,14 +261,7 @@ impl Element for WaterfallGapElement {
                     self.mouse_down(*position, ctx)
                 }
                 Some(warpui::Event::RightMouseDown { position, .. }) => {
-                    let position_in_terminal_view =
-                        *position - self.origin().expect("origin set after paint").xy();
-                    ctx.dispatch_typed_action(TerminalAction::BlockListContextMenu(
-                        BlockListMenuSource::OutsideBlockRightClick {
-                            position_in_terminal_view,
-                        },
-                    ));
-                    true
+                    self.right_mouse_down(*position, ctx)
                 }
                 Some(warpui::Event::ScrollWheel {
                     position,

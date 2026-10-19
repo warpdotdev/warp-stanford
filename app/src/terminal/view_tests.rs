@@ -1285,6 +1285,92 @@ fn waterfall_background_right_click_honors_right_click_pastes_setting() {
     })
 }
 
+/// Regression test for https://github.com/warpdotdev/warp/issues/7643.
+#[test]
+fn waterfall_gap_right_click_outside_pane_does_not_open_context_menu() {
+    App::test((), |mut app| async move {
+        initialize_app_for_terminal_view(&mut app);
+        let (window_id, terminal) = add_window_with_id_and_terminal(&mut app, None);
+
+        terminal.update(&mut app, |_view, ctx| {
+            InputModeSettings::handle(ctx).update(ctx, |input_mode_settings, ctx| {
+                let _ = input_mode_settings
+                    .input_mode
+                    .set_value(InputMode::Waterfall, ctx);
+            });
+        });
+
+        // Clearing the screen in waterfall mode creates a gap, which makes the pane render
+        // through `WaterfallGapElement`.
+        terminal.update(&mut app, |view, _ctx| {
+            let mut model = view.model.lock();
+            let block_list = model.block_list_mut();
+            block_list.set_next_gap_height_in_lines(10.0.into_lines());
+            block_list.clear_visible_screen();
+            assert!(block_list.active_gap().is_some());
+        });
+
+        let mut updated = EntityIdSet::default();
+        updated.insert(app.root_view_id(window_id).unwrap());
+        let invalidation = WindowInvalidation {
+            updated,
+            ..Default::default()
+        };
+        let presenter = Rc::new(RefCell::new(Presenter::new(window_id)));
+
+        // The test terminal's default pane is narrower than the scrollbar, which leaves
+        // `WaterfallGapElement` with zero width. Render a larger window so a click can land
+        // inside it.
+        let window_size = vec2f(200., 100.);
+
+        macro_rules! rerender {
+            () => {
+                app.update(enclose!((presenter, invalidation) move |ctx| {
+                    presenter
+                        .borrow_mut()
+                        .invalidate(invalidation, ctx);
+                    presenter.borrow_mut().build_scene(window_size, 1., None, ctx);
+                }));
+            };
+        }
+
+        macro_rules! right_click {
+            ($position:expr) => {
+                app.update(enclose!((presenter) move |ctx| {
+                    ctx.simulate_window_event(
+                        warpui::Event::RightMouseDown {
+                            position: $position,
+                            cmd: false,
+                            shift: false,
+                            click_count: 1,
+                        },
+                        window_id,
+                        presenter.clone(),
+                    );
+                }));
+            };
+        }
+
+        // In a split layout every pane receives every mouse event, so this pane also sees
+        // right-clicks meant for its neighbors. A point past the pane's right edge stands in
+        // for a click in a neighboring pane.
+        rerender!();
+        right_click!(vec2f(window_size.x() + 20., window_size.y() / 2.));
+        assert!(
+            !terminal.read(&app, |view, _ctx| view.is_context_menu_open()),
+            "a right-click outside the pane must not open the pane's context menu"
+        );
+
+        // A right-click on the empty area below the input still opens the pane's context menu.
+        rerender!();
+        right_click!(vec2f(window_size.x() / 2., window_size.y() - 1.));
+        assert!(
+            terminal.read(&app, |view, _ctx| view.is_context_menu_open()),
+            "a right-click inside the pane must open the pane's context menu"
+        );
+    })
+}
+
 /// Registers a rich-status-capable, `InProgress` CLI agent session that has
 /// already observed a `prompt_submit` -- the state a real working third-party
 /// harness turn is in -- so `observe_ctrl_c_write` is able to arm.
