@@ -17,9 +17,11 @@
     "immutable": "4.3.9",
     "lodash": "4.18.1",
     "@babel/core": "7.29.6",
+    "@fastify/busboy": "^3.2.2",
+    "@graphql-tools/executor-legacy-ws": "^1.1.35",
     "brace-expansion": "^2.1.7",
     "js-yaml": "^4.3.2",
-    "shell-quote": "^1.9.0",
+    "shell-quote": "^1.11.0",
     "ws": "8.21.0"
   }
 }
