@@ -57,6 +57,7 @@ fn benchmark_styles(font_family: FamilyId) -> RichTextStyles {
         text_color: white,
         baseline_ratio: 0.8,
         fixed_width_tab_size: None,
+        disable_ligatures: false,
     };
     RichTextStyles {
         base_text: paragraph,
