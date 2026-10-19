@@ -724,6 +724,7 @@ const MOBILE_OVERLAY_SCRIM_ALPHA: u8 = 128;
 
 pub const NEW_TAB_BUTTON_POSITION_ID: &str = "new_tab_button";
 pub const NEW_SESSION_MENU_BUTTON_POSITION_ID: &str = "new_session_menu_button";
+pub const TOOLS_PANEL_SETTINGS_BUTTON_POSITION_ID: &str = "left_panel:settings_button";
 
 /// Save position for the feature-intro popover, so the changelog chip can float
 /// just above it (see `feature_intro_chip_positioning`).
@@ -15399,6 +15400,11 @@ impl Workspace {
 
     pub fn is_left_panel_open(&self, ctx: &AppContext) -> bool {
         self.active_tab_pane_group().as_ref(ctx).left_panel_open
+    }
+
+    #[cfg(feature = "integration_tests")]
+    pub(crate) fn left_panel_active_view(&self, ctx: &AppContext) -> ToolPanelView {
+        self.left_panel_view.as_ref(ctx).active_view()
     }
 
     fn is_readonly_shared_session_active(&self, ctx: &mut ViewContext<Self>) -> bool {

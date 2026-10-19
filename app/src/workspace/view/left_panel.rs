@@ -8,8 +8,8 @@ use warp_errors::report_error;
 use warp_util::path::LineAndColumnArg;
 use warpui::elements::{
     Align, ChildView, ConstrainedBox, Container, CrossAxisAlignment, DragBarSide, Element, Empty,
-    Flex, MainAxisAlignment, MainAxisSize, MouseStateHandle, ParentElement, Resizable,
-    ResizableStateHandle, Shrinkable, resizable_state_handle,
+    Flex, Hoverable, MainAxisAlignment, MainAxisSize, MouseStateHandle, ParentElement, Resizable,
+    ResizableStateHandle, SavePosition, Shrinkable, resizable_state_handle,
 };
 use warpui::fonts::Weight;
 use warpui::platform::Cursor;
@@ -66,8 +66,9 @@ use crate::workspace::view::global_search::view::{
 use crate::workspace::view::{
     LEFT_PANEL_AGENT_CONVERSATIONS_BINDING_NAME, LEFT_PANEL_GLOBAL_SEARCH_BINDING_NAME,
     LEFT_PANEL_PROJECT_EXPLORER_BINDING_NAME, LEFT_PANEL_WARP_DRIVE_BINDING_NAME,
-    OPEN_GLOBAL_SEARCH_BINDING_NAME, TOGGLE_CONVERSATION_LIST_VIEW_BINDING_NAME,
-    TOGGLE_PROJECT_EXPLORER_BINDING_NAME, TOGGLE_WARP_DRIVE_BINDING_NAME,
+    OPEN_GLOBAL_SEARCH_BINDING_NAME, SHOW_SETTINGS_KEYBINDING_NAME,
+    TOGGLE_CONVERSATION_LIST_VIEW_BINDING_NAME, TOGGLE_PROJECT_EXPLORER_BINDING_NAME,
+    TOGGLE_WARP_DRIVE_BINDING_NAME, TOOLS_PANEL_SETTINGS_BUTTON_POSITION_ID,
 };
 use crate::workspaces::user_workspaces::UserWorkspaces;
 
@@ -216,6 +217,7 @@ pub struct LeftPanelView {
     resizable_state_handle: ResizableStateHandle,
     mouse_state_handles: MouseStateHandles,
     close_button_mouse_state: MouseStateHandle,
+    settings_button_mouse_state: MouseStateHandle,
     warp_drive_view: ViewHandle<DrivePanel>,
     conversation_list_view: ViewHandle<ConversationListView>,
     active_view: active_view_state::ActiveViewState,
@@ -466,6 +468,7 @@ impl LeftPanelView {
             resizable_state_handle,
             mouse_state_handles: Default::default(),
             close_button_mouse_state: Default::default(),
+            settings_button_mouse_state: Default::default(),
             warp_drive_view,
             conversation_list_view,
             active_view: active_view_state::new(active_view),
@@ -1027,6 +1030,25 @@ impl LeftPanelView {
         .finish()
     }
 
+    /// Renders a button that opens Settings. Unlike toolbelt buttons, it does not select a panel
+    /// view and is never shown as active.
+    fn settings_button(&self, appearance: &Appearance, ctx: &AppContext) -> Box<dyn Element> {
+        let button = Self::toolbelt_icon_button(
+            Icon::Gear,
+            false,
+            "Settings".to_string(),
+            keybinding_name_to_display_string(SHOW_SETTINGS_KEYBINDING_NAME, ctx),
+            self.settings_button_mouse_state.clone(),
+            appearance,
+        )
+        .on_click(move |ctx, _, _| {
+            ctx.dispatch_typed_action(WorkspaceAction::ShowSettings);
+        })
+        .finish();
+
+        SavePosition::new(button, TOOLS_PANEL_SETTINGS_BUTTON_POSITION_ID).finish()
+    }
+
     fn update_button_active_states(&mut self) {
         for button in &mut self.toolbelt_buttons {
             button.render_with_active_state = match &button.action {
@@ -1051,10 +1073,39 @@ impl LeftPanelView {
         appearance: &Appearance,
     ) -> Box<dyn Element> {
         let action = button_config.action.clone();
-        let ui_builder = appearance.ui_builder().clone();
-        let tooltip_keybinding = button_config.tooltip_keybinding.clone();
+        let icon = if button_config.render_with_active_state {
+            button_config.active_icon.unwrap_or(button_config.icon)
+        } else {
+            button_config.icon
+        };
 
-        let icon_color = if button_config.render_with_active_state {
+        Self::toolbelt_icon_button(
+            icon,
+            button_config.render_with_active_state,
+            button_config.tooltip_text.clone(),
+            button_config.tooltip_keybinding.clone(),
+            mouse_state,
+            appearance,
+        )
+        .on_click(move |ctx, _, _| {
+            ctx.dispatch_typed_action(action.clone());
+        })
+        .finish()
+    }
+
+    /// Builds an icon button with the toolbelt's shared styling. The caller attaches the click
+    /// handler.
+    fn toolbelt_icon_button(
+        icon: Icon,
+        is_active: bool,
+        tooltip_text: String,
+        tooltip_keybinding: Option<String>,
+        mouse_state: MouseStateHandle,
+        appearance: &Appearance,
+    ) -> Hoverable {
+        let ui_builder = appearance.ui_builder().clone();
+
+        let icon_color = if is_active {
             appearance.theme().foreground().into_solid()
         } else {
             appearance
@@ -1065,50 +1116,32 @@ impl LeftPanelView {
 
         let tooltip = if let Some(keybinding) = tooltip_keybinding {
             ui_builder
-                .tool_tip_with_sublabel(button_config.tooltip_text.clone(), keybinding)
+                .tool_tip_with_sublabel(tooltip_text, keybinding)
                 .build()
                 .finish()
         } else {
-            ui_builder
-                .tool_tip(button_config.tooltip_text.clone())
-                .build()
-                .finish()
+            ui_builder.tool_tip(tooltip_text).build().finish()
         };
 
-        let icon = if button_config.render_with_active_state {
-            button_config.active_icon.unwrap_or(button_config.icon)
-        } else {
-            button_config.icon
-        };
-
-        icon_button(
-            appearance,
-            icon,
-            button_config.render_with_active_state,
-            mouse_state.clone(),
-        )
-        .with_tooltip(move || tooltip)
-        .with_style(UiComponentStyles {
-            font_color: Some(icon_color),
-            height: Some(24.),
-            width: Some(24.),
-            padding: Some(Coords::uniform(4.)),
-            ..Default::default()
-        })
-        .with_active_styles(UiComponentStyles {
-            font_color: Some(icon_color),
-            height: Some(24.),
-            width: Some(24.),
-            padding: Some(Coords::uniform(4.)),
-            background: Some(internal_colors::fg_overlay_3(appearance.theme()).into()),
-            ..Default::default()
-        })
-        .build()
-        .on_click(move |ctx, _, _| {
-            ctx.dispatch_typed_action(action.clone());
-        })
-        .with_cursor(Cursor::PointingHand)
-        .finish()
+        icon_button(appearance, icon, is_active, mouse_state)
+            .with_tooltip(move || tooltip)
+            .with_style(UiComponentStyles {
+                font_color: Some(icon_color),
+                height: Some(24.),
+                width: Some(24.),
+                padding: Some(Coords::uniform(4.)),
+                ..Default::default()
+            })
+            .with_active_styles(UiComponentStyles {
+                font_color: Some(icon_color),
+                height: Some(24.),
+                width: Some(24.),
+                padding: Some(Coords::uniform(4.)),
+                background: Some(internal_colors::fg_overlay_3(appearance.theme()).into()),
+                ..Default::default()
+            })
+            .build()
+            .with_cursor(Cursor::PointingHand)
     }
 }
 
@@ -1310,24 +1343,22 @@ impl View for LeftPanelView {
             self.mouse_state_handles.warp_drive_button.clone(),
         ];
 
+        let mut header_left = Flex::row()
+            .with_cross_axis_alignment(CrossAxisAlignment::Center)
+            .with_spacing(4.0)
+            .with_main_axis_size(MainAxisSize::Min);
+
         // If there is only one button in the toolbelt row,
         // there is no need to show it as it's a bit redundant.
-        let toolbelt_button_row = if self.toolbelt_buttons.len() > 1 {
-            Some(
-                Flex::row()
-                    .with_cross_axis_alignment(CrossAxisAlignment::Center)
-                    .with_spacing(4.0)
-                    .with_children(self.toolbelt_buttons.iter().zip(&mouse_state_handles).map(
-                        |(button_config, mouse_state)| {
-                            Self::render_button(button_config, mouse_state.clone(), appearance)
-                        },
-                    ))
-                    .with_main_axis_size(MainAxisSize::Min)
-                    .finish(),
-            )
-        } else {
-            None
-        };
+        if self.toolbelt_buttons.len() > 1 {
+            header_left.add_children(self.toolbelt_buttons.iter().zip(&mouse_state_handles).map(
+                |(button_config, mouse_state)| {
+                    Self::render_button(button_config, mouse_state.clone(), appearance)
+                },
+            ));
+        }
+        header_left.add_child(self.settings_button(appearance, app));
+        let header_left = header_left.finish();
 
         let active_view = self.active_view.get();
         let availability = self.active_view_availability(app);
@@ -1377,12 +1408,6 @@ impl View for LeftPanelView {
 
         let panel_content = Container::new({
             let column = Flex::column();
-
-            let header_left = if let Some(row) = toolbelt_button_row {
-                row
-            } else {
-                Flex::row().finish()
-            };
 
             let header_row = Container::new(
                 ConstrainedBox::new(
