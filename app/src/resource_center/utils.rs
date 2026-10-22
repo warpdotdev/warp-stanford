@@ -75,6 +75,7 @@ pub const INPUT_EDITOR_KEYBINDINGS: &[&str] = &[
     "editor_view:select_up",
     "editor_view:unfold",
     "editor_view:up",
+    "editor_view:yank",
 ];
 
 pub const TERMINAL_KEYBINDINGS: &[&str] = &[

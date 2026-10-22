@@ -265,11 +265,6 @@ pub fn init(ctx: &mut AppContext) {
             id!("EditorView") & !id!("IMEOpen"),
         ),
         FixedBinding::new(
-            "ctrl-y",
-            EditorAction::Yank,
-            id!("EditorView") & !id!("IMEOpen"),
-        ),
-        FixedBinding::new(
             "shift-tab",
             EditorAction::ShiftTab,
             id!("EditorView") & !id!("IMEOpen"),
@@ -820,17 +815,22 @@ pub fn init(ctx: &mut AppContext) {
         .with_context_predicate(id!("EditorView") & !id!("IMEOpen"))
         // VSCode only binds a default binding on Mac, see https://github.com/microsoft/vscode/blob/ceda6cc4856841f1550a60327a3eaf3a1d0c306a/src/vs/editor/contrib/linesOperations/browser/linesOperations.ts#L657.
         .with_mac_key_binding("cmd-delete"),
+        // Last-registered editable bindings win, so this must stay above `delete_all_left` for a
+        // saved `ctrl-y` on that action to beat Yank.
+        EditableBinding::new(
+            "editor_view:yank",
+            "Yank (last killed text)",
+            EditorAction::Yank,
+        )
+        .with_context_predicate(id!("EditorView") & !id!("IMEOpen"))
+        .with_key_binding("ctrl-y"),
         EditableBinding::new(
             "editor_view:delete_all_left",
             "Delete all left",
             EditorAction::DeleteAllLeft,
         )
         .with_context_predicate(id!("EditorView") & !id!("IMEOpen"))
-        // Intellij uses `ctrl-Y` to delete a line on Windows/Linux whereas VSCode uses
-        // `ctrl-shift-k`. We use the former because `ctrl-shift-k` would interfere with the binding
-        // to clear all blocks within the blocklist.
-        .with_mac_key_binding("cmd-backspace")
-        .with_linux_or_windows_key_binding("ctrl-y"),
+        .with_mac_key_binding("cmd-backspace"),
         EditableBinding::new(
             "editor_view:insert_newline",
             "Insert newline",
@@ -8473,8 +8473,8 @@ pub enum Event {
     /// Signifies that something has been pasted into the view
     Paste,
     MiddleClickPaste,
-    /// Emitted when the 'delete all left' keybinding is triggered (cmd-delete on mac, ctrl-y on
-    /// linux).
+    /// Emitted when the 'delete all left' keybinding is triggered (cmd-backspace on macOS; no
+    /// default on Linux/Windows).
     DeleteAllLeft,
     /// Notify the user that they're using a MacOS-style binding that conflicts with a non-MacOS-style binding.
     EmacsBindingUsed,

@@ -12,7 +12,8 @@ use warp::integration_testing::terminal::util::{
     ExpectedExitStatus, current_shell_starter_and_version,
 };
 use warp::integration_testing::terminal::{
-    execute_command_for_single_terminal_in_tab, wait_until_bootstrapped_single_pane_for_tab,
+    assert_input_editor_contents, execute_command_for_single_terminal_in_tab,
+    wait_until_bootstrapped_single_pane_for_tab,
 };
 use warp::integration_testing::view_getters::{
     single_input_view_for_tab, single_terminal_view_for_tab,
@@ -219,6 +220,42 @@ pub fn test_latest_buffer_operations() -> Builder {
                 .add_named_assertion(
                     "Ensure the latest buffer operations are empty",
                     latest_buffer_operations_are_empty(0, true),
+                ),
+        )
+}
+
+pub fn test_ctrl_y_yanks_killed_input() -> Builder {
+    let sentinel = "echo ctrl-y-yank-sentinel";
+    new_builder()
+        .with_step(wait_until_bootstrapped_single_pane_for_tab(0))
+        .with_step(
+            new_step_with_default_assertions("Check the input starts empty").add_named_assertion(
+                "Input is empty after bootstrap",
+                assert_input_editor_contents(0, ""),
+            ),
+        )
+        .with_step(
+            new_step_with_default_assertions("Type the sentinel into the input")
+                .with_typed_characters(&[sentinel])
+                .add_named_assertion(
+                    "Input contains exactly the sentinel",
+                    assert_input_editor_contents(0, sentinel),
+                ),
+        )
+        .with_step(
+            new_step_with_default_assertions("Kill the input with ctrl-u")
+                .with_keystrokes(&["ctrl-u"])
+                .add_named_assertion(
+                    "Input is empty after ctrl-u",
+                    assert_input_editor_contents(0, ""),
+                ),
+        )
+        .with_step(
+            new_step_with_default_assertions("Yank the killed input with ctrl-y")
+                .with_keystrokes(&["ctrl-y"])
+                .add_named_assertion(
+                    "Input contains exactly the killed sentinel after ctrl-y",
+                    assert_input_editor_contents(0, sentinel),
                 ),
         )
 }

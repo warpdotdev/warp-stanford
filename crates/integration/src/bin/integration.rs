@@ -443,6 +443,15 @@ fn register_tests() -> HashMap<&'static str, BoxedBuilderFn> {
     register_test!(test_settings_agent_mcp_servers_renders_standalone_page);
 
     register_test!(test_middle_click_paste);
+    register_test!(test_ctrl_y_yanks_killed_input);
+    register_test!(test_yank_settings_rebind);
+    register_test!(test_yank_settings_clear_then_reset);
+    register_test!(test_yank_settings_conflict_warning);
+    register_test!(test_yank_saved_delete_all_left_none);
+    register_test!(test_yank_saved_delete_all_left_rebound);
+    register_test!(test_yank_saved_delete_all_left_ctrl_y);
+    register_test!(test_yank_saved_none);
+    register_test!(test_yank_saved_custom_trigger);
 
     register_test!(test_copy_selection_within_ai_block);
     register_test!(test_selection_first_to_last_through_ai_simple);
