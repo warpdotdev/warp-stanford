@@ -57,6 +57,9 @@ on:
         type: boolean
         default: true
 
+permissions:
+  contents: write # create_release_tag_and_branch pushes the release branch/tag with the checkout token; action-gh-release creates the release and gh release upload attaches assets
+
 env:
   CARGO_TERM_COLOR: always
   CONFIG_FILE: ".github/workflows/release_configurations.json"

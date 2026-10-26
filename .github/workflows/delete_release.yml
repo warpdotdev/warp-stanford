@@ -26,6 +26,8 @@ jobs:
   delete_release:
     name: Delete Release Branch
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # actions/checkout reads the branch; git push creates deleted/<branch> and deletes the original with the checkout token
     steps:
       - name: Verify confirmation
         run: |
