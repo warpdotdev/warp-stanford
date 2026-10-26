@@ -689,6 +689,7 @@ dependencies = [
  "arborium-scala",
  "arborium-sql",
  "arborium-starlark",
+ "arborium-svelte",
  "arborium-swift",
  "arborium-theme",
  "arborium-toml",
@@ -1024,6 +1025,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f510abda8b94d9322c162c8e70aa91fa023fa8962dca36624168241ac0cbed40"
 dependencies = [
  "arborium-sysroot",
+ "cc",
+ "tree-sitter-language",
+]
+
+[[package]]
+name = "arborium-svelte"
+version = "2.13.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5aebeb34cc9d7cd8dd57337df0a3d44deaa0a085382ba08b133ebd26964ef54b"
+dependencies = [
+ "arborium-css",
+ "arborium-html",
+ "arborium-javascript",
+ "arborium-scss",
+ "arborium-sysroot",
+ "arborium-typescript",
  "cc",
  "tree-sitter-language",
 ]

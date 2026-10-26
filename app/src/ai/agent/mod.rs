@@ -1087,6 +1087,7 @@ impl ProgrammingLanguage {
                 "starlark" => Some("bzl"),
                 "xml" => Some("xml"),
                 "vue" => Some("vue"),
+                "svelte" => Some("svelte"),
                 "dockerfile" | "docker" | "containerfile" => Some("dockerfile"),
                 "markdown" | "md" => Some("md"),
                 _ => None,

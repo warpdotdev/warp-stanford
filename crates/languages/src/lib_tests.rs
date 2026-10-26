@@ -1,5 +1,6 @@
 use std::path::Path;
 
+use arborium::tree_sitter::{Parser, QueryCursor, StreamingIterator};
 use warp_util::standardized_path::StandardizedPath;
 
 use crate::{SUPPORTED_LANGUAGES, language_by_filename, language_by_local_filename, load_language};
@@ -92,6 +93,87 @@ fn markdown_extensions_resolve_to_markdown() {
             language.display_name(),
             "Markdown",
             "{filename} should resolve to Markdown",
+        );
+    }
+}
+
+/// `.svelte` files (including SvelteKit route files like `+page.svelte`) should resolve
+/// to the Svelte language so the editor applies syntax highlighting instead of showing
+/// "Language support is unavailable for this file type".
+#[test]
+fn svelte_extension_resolves_to_svelte() {
+    for filename in ["App.svelte", "+page.svelte"] {
+        let path = StandardizedPath::try_new(&format!("/tmp/{filename}"))
+            .expect("test path should be absolute");
+        let language = language_by_filename(&path)
+            .unwrap_or_else(|| panic!("expected {filename} to resolve to a language"));
+        assert_eq!(language.display_name(), "Svelte");
+    }
+}
+
+#[test]
+fn local_svelte_extension_resolves_to_svelte() {
+    let language = language_by_local_filename(Path::new("App.svelte"))
+        .expect("`.svelte` files should resolve to a language");
+    assert_eq!(language.display_name(), "Svelte");
+}
+
+/// The Svelte highlight query should capture Svelte block syntax (`{#if}`, `{#each}`)
+/// as keywords and markup as tags, not just parse the file.
+#[test]
+fn svelte_highlight_query_captures_svelte_syntax() {
+    let source = r#"<script>
+  let items = [];
+</script>
+
+{#if items.length}
+  <ul>
+    {#each items as item}
+      <li class="item">{item}</li>
+    {/each}
+  </ul>
+{:else}
+  <p>Empty</p>
+{/if}
+"#;
+    let language = load_language("svelte").expect("svelte should load");
+    let mut parser = Parser::new();
+    parser
+        .set_language(&language.grammar)
+        .expect("svelte grammar should be compatible with the parser");
+    let tree = parser
+        .parse(source, None)
+        .expect("svelte source should parse");
+
+    let capture_names = language.highlight_query.capture_names();
+    let mut cursor = QueryCursor::new();
+    let mut captures = cursor.captures(
+        &language.highlight_query,
+        tree.root_node(),
+        source.as_bytes(),
+    );
+    let mut captured = Vec::new();
+    while let Some((query_match, capture_index)) = captures.next() {
+        let capture = query_match.captures[*capture_index];
+        let text = &source[capture.node.byte_range()];
+        captured.push((text.to_string(), capture_names[capture.index as usize]));
+    }
+
+    let is_captured_as = |text: &str, prefix: &str| {
+        captured
+            .iter()
+            .any(|(t, name)| t == text && name.split('.').next() == Some(prefix))
+    };
+    for keyword in ["if", "each", "as", "else"] {
+        assert!(
+            is_captured_as(keyword, "keyword"),
+            "expected `{keyword}` to be captured as a keyword, got {captured:?}"
+        );
+    }
+    for tag in ["ul", "li", "p"] {
+        assert!(
+            is_captured_as(tag, "tag"),
+            "expected `{tag}` to be captured as a tag, got {captured:?}"
         );
     }
 }
