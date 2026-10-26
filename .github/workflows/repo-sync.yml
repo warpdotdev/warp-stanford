@@ -38,6 +38,9 @@ jobs:
       ) &&
       github.repository_owner == 'warpdotdev'
     uses: warpdotdev/repo-sync/.github/workflows/restack.yml@main
+    permissions:
+      contents: write # repo-sync restack job requests it to rebase and push the sync stack
+      pull-requests: write # repo-sync restack job requests it to retarget sync PRs and enable auto-merge
     with:
       repo_sync_ref: main
       app_id: ${{ vars.REPO_SYNC_APP_ID }}
@@ -54,6 +57,9 @@ jobs:
       startsWith(github.event.pull_request.head.ref, 'repo-sync/') &&
       github.repository_owner == 'warpdotdev'
     uses: warpdotdev/repo-sync/.github/workflows/approve.yml@main
+    permissions:
+      contents: write # repo-sync approve job requests it to push conflict resolutions
+      pull-requests: write # repo-sync approve job requests it to approve sync PRs and enable auto-merge
     with:
       repo_sync_ref: main
       approver_app_id: ${{ vars.REPO_SYNC_APPROVER_APP_ID }}
@@ -65,6 +71,10 @@ jobs:
   escalation:
     if: inputs.action == 'escalation' && github.repository_owner == 'warpdotdev'
     uses: warpdotdev/repo-sync/.github/workflows/escalation.yml@main
+    permissions:
+      actions: write # repo-sync escalation job requests it to dispatch the restack workflow for stuck stacks
+      contents: read # repo-sync escalation job requests it to read the repo
+      pull-requests: write # repo-sync escalation job requests it to request reviewers and disable auto-merge on sync PRs
     with:
       repo_sync_ref: main
       app_id: ${{ vars.REPO_SYNC_APP_ID }}

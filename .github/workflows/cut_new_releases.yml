@@ -71,6 +71,8 @@ jobs:
   create_release:
     name: Create Release
     uses: ./.github/workflows/create_release.yml
+    permissions:
+      contents: write # create_release.yml pushes the release branch/tag, creates the GitHub release, and uploads assets
     needs: get_config
     strategy:
       fail-fast: false
