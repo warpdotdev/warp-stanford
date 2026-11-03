@@ -34,6 +34,9 @@ integration_tests! {
     test_background_output,
     // Must run against zsh.
     test_zshrc_keypress,
+    // Must run against zsh; they write the `-` and `..` aliases that oh-my-zsh ships into .zshrc.
+    test_alias_expansion_does_not_expand_dash_alias_on_space,
+    test_alias_expansion_expands_dot_dot_alias_on_space,
     // Tests bash- and zsh-specific behavior.
     test_alias_guards_on_ps1_set,
     // Tests prompt information from shell.

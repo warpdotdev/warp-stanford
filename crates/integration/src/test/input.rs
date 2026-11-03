@@ -1,5 +1,7 @@
+use std::collections::HashMap;
 use std::time::Duration;
 
+use settings::Setting as _;
 use warp::features::FeatureFlag;
 use warp::integration_testing::clipboard::write_to_clipboard;
 use warp::integration_testing::input::{
@@ -17,12 +19,14 @@ use warp::integration_testing::terminal::{
 use warp::integration_testing::view_getters::{
     single_input_view_for_tab, single_terminal_view_for_tab,
 };
+use warp::settings::AliasExpansionEnabled;
 use warp::terminal::shell::ShellType;
-use warpui_core::integration::TestStep;
+use warpui_core::integration::{AssertionCallback, TestStep};
 use warpui_core::{Event, async_assert_eq};
 
 use super::new_builder;
 use crate::Builder;
+use crate::util::{ShellRcType, write_rc_files_for_test};
 
 /// Ensures that tab completions are hidden when the completions menu is opened
 /// but re-appear when the menu is closed.
@@ -319,4 +323,82 @@ pub fn test_git_prompt_chips() -> Builder {
                     })
             }),
         )
+}
+
+/// Boots a zsh session with alias expansion enabled and `alias_definition` in
+/// `.zshrc`, then waits until the session reports `alias_name` with
+/// `alias_value` so that later steps exercise expansion rather than a race
+/// with bootstrap.
+fn alias_expansion_builder(
+    alias_definition: &'static str,
+    alias_name: &'static str,
+    alias_value: &'static str,
+) -> Builder {
+    new_builder()
+        .set_should_run_test(|| {
+            let (starter, _) = current_shell_starter_and_version();
+            starter.shell_type() == ShellType::Zsh
+        })
+        .with_user_defaults(HashMap::from([(
+            AliasExpansionEnabled::storage_key().to_owned(),
+            true.to_string(),
+        )]))
+        .with_setup(move |utils| {
+            write_rc_files_for_test(utils.test_dir(), alias_definition, [ShellRcType::Zsh]);
+        })
+        .with_step(wait_until_bootstrapped_single_pane_for_tab(0))
+        .with_step(
+            new_step_with_default_assertions("Wait for the shell to report the alias")
+                .add_named_assertion(
+                    "session knows the alias from .zshrc",
+                    session_alias_value_is(0, alias_name, alias_value),
+                ),
+        )
+}
+
+fn session_alias_value_is(
+    tab_idx: usize,
+    alias_name: &'static str,
+    expected_value: &'static str,
+) -> AssertionCallback {
+    Box::new(move |app, window_id| {
+        let input = single_input_view_for_tab(app, window_id, tab_idx);
+        input.read(app, |view, ctx| {
+            let actual_value = view
+                .active_session(ctx)
+                .and_then(|session| session.alias_value(alias_name).map(str::to_owned));
+            async_assert_eq!(
+                actual_value.as_deref(),
+                Some(expected_value),
+                "session should report alias {alias_name:?} as {expected_value:?}"
+            )
+        })
+    })
+}
+
+/// Regression test for warpdotdev/warp#7254: oh-my-zsh defines
+/// `alias -- -='cd -'`, and typing `-` then Space must not rewrite the input to
+/// `cd - `, because `-` is also how users start typing flags and options.
+pub fn test_alias_expansion_does_not_expand_dash_alias_on_space() -> Builder {
+    alias_expansion_builder("alias -- -='cd -'\n", "-", "cd -").with_step(
+        new_step_with_default_assertions("Type '-' then Space into the empty input")
+            .with_typed_characters(&["-", " "])
+            .add_named_assertion(
+                "input is exactly '- ' (the '-' alias was not expanded)",
+                input_contains_string(0, String::from("- ")),
+            ),
+    )
+}
+
+/// Guards the directory-navigation shortcut that the #7254 fix must keep:
+/// `..` aliased to `cd ..` still expands when followed by Space.
+pub fn test_alias_expansion_expands_dot_dot_alias_on_space() -> Builder {
+    alias_expansion_builder("alias ..='cd ..'\n", "..", "cd ..").with_step(
+        new_step_with_default_assertions("Type '..' then Space into the empty input")
+            .with_typed_characters(&["..", " "])
+            .add_named_assertion(
+                "input is 'cd .. ' (the '..' alias was expanded)",
+                input_contains_string(0, String::from("cd .. ")),
+            ),
+    )
 }
