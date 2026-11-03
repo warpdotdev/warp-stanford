@@ -7480,6 +7480,106 @@ fn test_alias_expansion() {
 }
 
 #[test]
+fn test_alias_expansion_skips_dash_prefixed_alias_on_space() {
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+
+        // oh-my-zsh defines `alias -- -='cd -'` and `alias ..='cd ..'`.
+        let aliases =
+            HashMap::from_iter([("-".into(), "cd -".into()), ("..".into(), "cd ..".into())]);
+        let session_info = SessionInfo::new_for_test().with_aliases(aliases);
+
+        set_alias_expansion_setting(true, &mut app);
+        let terminal = add_window_with_bootstrapped_terminal(
+            &mut app,
+            None, /* history_file_commands */
+            Some(session_info),
+        )
+        .await;
+        let (input, editor) = terminal.read(&app, |terminal, ctx| {
+            let input = terminal.input().clone();
+            let editor = input.as_ref(ctx).editor().clone();
+            (input, editor)
+        });
+        input.update(&mut app, |input, ctx| {
+            input.set_active_block_metadata(
+                BlockMetadata::new(Some(SessionId::from(0)), Some("~".into())),
+                false,
+                ctx,
+            )
+        });
+
+        // A leading `-` followed by a space is a list marker, so it is not expanded.
+        input.update(&mut app, |input, ctx| {
+            input.user_insert("- ", ctx);
+        });
+        editor.update(&mut app, |editor, ctx| {
+            editor.move_to_buffer_end(ctx);
+            // Cursor is now at "- |"
+        });
+        input.update(&mut app, |input, ctx| {
+            input.run_expansion_on_space(ctx);
+            assert_eq!(input.buffer_text(ctx), "- ");
+        });
+
+        // The same holds for a list item on a later line of a multi-line input, which is the
+        // case reported upstream.
+        input.update(&mut app, |input, ctx| {
+            input.clear_buffer_and_reset_undo_stack(ctx);
+            input.user_insert("Please follow this plan:\n- ", ctx);
+        });
+        editor.update(&mut app, |editor, ctx| {
+            editor.move_to_buffer_end(ctx);
+            // Cursor is now at "Please follow this plan:\n- |"
+        });
+        input.update(&mut app, |input, ctx| {
+            input.run_expansion_on_space(ctx);
+            assert_eq!(input.buffer_text(ctx), "Please follow this plan:\n- ");
+        });
+
+        // Aliases that don't start with `-` still expand on space.
+        input.update(&mut app, |input, ctx| {
+            input.clear_buffer_and_reset_undo_stack(ctx);
+            input.user_insert(".. ", ctx);
+        });
+        editor.update(&mut app, |editor, ctx| {
+            editor.move_to_buffer_end(ctx);
+            // Cursor is now at ".. |"
+        });
+        input.update(&mut app, |input, ctx| {
+            input.run_expansion_on_space(ctx);
+            assert_eq!(input.buffer_text(ctx), "cd .. ");
+        });
+        input.update(&mut app, |input, ctx| {
+            input.clear_buffer_and_reset_undo_stack(ctx);
+            input.user_insert("echo first\n.. ", ctx);
+        });
+        editor.update(&mut app, |editor, ctx| {
+            editor.move_to_buffer_end(ctx);
+            // Cursor is now at "echo first\n.. |"
+        });
+        input.update(&mut app, |input, ctx| {
+            input.run_expansion_on_space(ctx);
+            assert_eq!(input.buffer_text(ctx), "echo first\ncd .. ");
+        });
+
+        // A lone `-` still expands when the command is executed.
+        input.update(&mut app, |input, ctx| {
+            input.clear_buffer_and_reset_undo_stack(ctx);
+            input.user_insert("-", ctx);
+        });
+        editor.update(&mut app, |editor, ctx| {
+            editor.move_to_buffer_end(ctx);
+            // Cursor is now at "-|"
+        });
+        input.update(&mut app, |input, ctx| {
+            let result = input.get_expanded_command_on_execute(ctx);
+            assert_eq!(result, Some("cd -".into()));
+        });
+    });
+}
+
+#[test]
 fn test_alias_expansion_multiple_commands_in_input() {
     App::test((), |mut app| async move {
         initialize_app(&mut app);
