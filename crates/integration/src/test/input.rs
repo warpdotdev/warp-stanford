@@ -390,8 +390,8 @@ pub fn test_alias_expansion_does_not_expand_dash_alias_on_space() -> Builder {
     )
 }
 
-/// Guards the directory-navigation shortcut that the #7254 fix must keep:
-/// `..` aliased to `cd ..` still expands when followed by Space.
+/// `..` aliased to `cd ..` still expands when followed by Space, so skipping
+/// dash-prefixed alias names does not affect directory-navigation shortcuts.
 pub fn test_alias_expansion_expands_dot_dot_alias_on_space() -> Builder {
     alias_expansion_builder("alias ..='cd ..'\n", "..", "cd ..").with_step(
         new_step_with_default_assertions("Type '..' then Space into the empty input")
