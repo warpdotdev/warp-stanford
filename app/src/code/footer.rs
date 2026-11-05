@@ -1938,8 +1938,8 @@ impl TypedActionView for CodeFooterView {
                     });
 
                     // Disable in PersistedWorkspace
-                    PersistedWorkspace::handle(ctx).update(ctx, |workspace, _| {
-                        workspace.disable_lsp_server_for_path(&workspace_root, server_type);
+                    PersistedWorkspace::handle(ctx).update(ctx, |workspace, ctx| {
+                        workspace.disable_lsp_server_for_path(&workspace_root, server_type, ctx);
                     });
                 }
                 ctx.notify();

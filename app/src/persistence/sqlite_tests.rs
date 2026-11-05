@@ -6,6 +6,7 @@ use ai::workspace::WorkspaceMetadata;
 use chrono::{Local, Utc};
 use cloud_object_persistence::to_cloud_object_permissions;
 use diesel::connection::SimpleConnection;
+use lsp::supported_servers::LSPServerType;
 use pathfinder_geometry::rect::RectF;
 use pathfinder_geometry::vector::Vector2F;
 use warp_core::features::FeatureFlag;
@@ -16,6 +17,7 @@ use super::{
     decode_path, deduplicate_events, encode_path, get_all_codebase_index_metadata,
     read_sqlite_data, save_app_state, save_codebase_index_metadata, setup_database, start_writer,
 };
+use crate::ai::persisted_workspace::EnablementState;
 use crate::app_state::{
     AppState, CodePaneSnapShot, CodePaneTabSnapshot, LeafContents, LeafSnapshot, PaneNodeSnapshot,
     TabGroupSnapshot, TabSnapshot, TerminalPaneSnapshot, WindowSnapshot,
@@ -139,6 +141,83 @@ fn test_codebase_metadata(path: &str) -> WorkspaceMetadata {
         modified_ts: None,
         queried_ts: None,
     }
+}
+
+#[test]
+fn removing_workspace_language_servers_survives_reload_and_preserves_metadata() {
+    let tempdir = tempfile::tempdir().unwrap();
+    let database_path = tempdir.path().join("warp.sqlite");
+    let mut conn = setup_database(&database_path).unwrap();
+    let removed = WorkspaceMetadata {
+        path: PathBuf::from("/projects/remove"),
+        navigated_ts: Some(chrono::DateTime::UNIX_EPOCH),
+        modified_ts: Some(chrono::DateTime::UNIX_EPOCH),
+        queried_ts: Some(chrono::DateTime::UNIX_EPOCH),
+    };
+    let kept = test_codebase_metadata("/projects/keep");
+    save_codebase_index_metadata(&mut conn, removed.clone()).unwrap();
+    save_codebase_index_metadata(&mut conn, kept.clone()).unwrap();
+    super::upsert_workspace_language_server(
+        &mut conn,
+        &removed.path,
+        LSPServerType::Pyright,
+        EnablementState::Yes,
+    )
+    .unwrap();
+    super::upsert_workspace_language_server(
+        &mut conn,
+        &removed.path,
+        LSPServerType::RustAnalyzer,
+        EnablementState::No,
+    )
+    .unwrap();
+    super::upsert_workspace_language_server(
+        &mut conn,
+        &kept.path,
+        LSPServerType::Pyright,
+        EnablementState::Yes,
+    )
+    .unwrap();
+
+    super::handle_model_event(
+        ModelEvent::DeleteWorkspaceLanguageServers {
+            workspace_path: removed.path.clone(),
+        },
+        &mut conn,
+    )
+    .unwrap();
+    drop(conn);
+    let mut conn = setup_database(&database_path).unwrap();
+
+    let servers = super::get_all_workspace_language_servers_by_workspace(&mut conn).unwrap();
+    assert!(!servers.contains_key(&removed.path));
+    assert_eq!(
+        servers[&kept.path][&LSPServerType::Pyright],
+        EnablementState::Yes
+    );
+    let metadata = get_all_codebase_index_metadata(&mut conn).unwrap();
+    assert_eq!(metadata.len(), 2);
+    let restored = metadata
+        .iter()
+        .find(|metadata| metadata.path == removed.path)
+        .unwrap();
+    assert_eq!(restored.modified_ts, removed.modified_ts);
+    assert_eq!(restored.navigated_ts, removed.navigated_ts);
+    assert_eq!(restored.queried_ts, removed.queried_ts);
+}
+
+#[test]
+fn removing_workspace_language_servers_is_idempotent_for_missing_paths() {
+    let tempdir = tempfile::tempdir().unwrap();
+    let mut conn = setup_database(&tempdir.path().join("warp.sqlite")).unwrap();
+    let path = PathBuf::from("/projects/missing");
+    super::delete_workspace_language_servers(&mut conn, &path).unwrap();
+    super::delete_workspace_language_servers(&mut conn, &path).unwrap();
+    assert!(
+        get_all_codebase_index_metadata(&mut conn)
+            .unwrap()
+            .is_empty()
+    );
 }
 
 #[test]
