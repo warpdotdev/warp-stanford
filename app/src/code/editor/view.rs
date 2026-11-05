@@ -37,9 +37,10 @@ use warpui::elements::new_scrollable::{
     AxisConfiguration, DualAxisConfig, NewScrollableElement, ScrollableAppearance,
 };
 use warpui::elements::{
-    ChildAnchor, ChildView, Dismiss, Fill, Flex, Margin, MouseStateHandle, NewScrollable,
-    OffsetPositioning, Padding, ParentAnchor, ParentElement, ParentOffsetBounds, ScrollStateHandle,
-    Shrinkable, Stack,
+    Border, ChildAnchor, ChildView, Container, Dismiss, Fill, Flex, Margin, MouseStateHandle,
+    NewScrollable, OffsetPositioning, Padding, ParentAnchor, ParentElement, ParentOffsetBounds,
+    PositionedElementAnchor, PositionedElementOffsetBounds, ScrollStateHandle, Shrinkable, Stack,
+    Text,
 };
 use warpui::event::ModifiersState;
 use warpui::keymap::Keystroke;
@@ -283,6 +284,9 @@ pub struct CodeEditorView {
     /// The offset where find references card is anchored (if showing).
     find_references_anchor_offset: Option<CharOffset>,
     window_id: WindowId,
+    /// Uncommitted IME composition text. It is drawn at the cursor and never written to the buffer,
+    /// so composing doesn't create undo entries, dirty the file, or notify language servers.
+    ime_marked_text: Option<String>,
 }
 
 impl CodeEditorView {
@@ -429,6 +433,7 @@ impl CodeEditorView {
             ),
             show_find_references_provider: render_options.show_find_references_provider,
             find_references_anchor_offset: None,
+            ime_marked_text: None,
             window_id: ctx.window_id(),
         }
     }
@@ -2064,7 +2069,64 @@ impl CodeEditorView {
         }
     }
 
+    fn set_ime_marked_text(&mut self, marked_text: &str, ctx: &mut ViewContext<Self>) {
+        if !FeatureFlag::ImeMarkedText.is_enabled() || !ctx.is_self_focused() {
+            return;
+        }
+        if matches!(
+            self.vim_mode(ctx),
+            Some(VimMode::Normal) | Some(VimMode::Visual(_))
+        ) {
+            return;
+        }
+        self.ime_marked_text = (!marked_text.is_empty()).then(|| marked_text.to_owned());
+        ctx.notify();
+    }
+
+    /// Draws the composition over the text after the cursor (with an opaque background) rather
+    /// than shifting it, since the composition is not part of the laid-out buffer.
+    fn render_ime_marked_text(&self, marked_text: &str, app: &AppContext) -> Box<dyn Element> {
+        let theme = Appearance::as_ref(app).theme();
+        let styles = &self
+            .model
+            .as_ref(app)
+            .render_state()
+            .as_ref(app)
+            .styles()
+            .base_text;
+        Container::new(
+            Text::new(marked_text.to_owned(), styles.font_family, styles.font_size)
+                .with_line_height_ratio(styles.line_height_ratio)
+                .with_color(styles.text_color)
+                .finish(),
+        )
+        .with_background(theme.background())
+        .with_border(Border::bottom(1.).with_border_color(styles.text_color))
+        .finish()
+    }
+
+    /// Inserts any uncommitted IME composition as-is, matching the terminal input editor when the
+    /// cursor moves or focus leaves mid-composition. The platform IME is told to drop its own
+    /// composition so it doesn't later commit a candidate at the new cursor.
+    fn commit_ime_marked_text(&mut self, ctx: &mut ViewContext<Self>) {
+        if let Some(marked_text) = self.ime_marked_text.take() {
+            self.model.update(ctx, |model, ctx| {
+                model.user_insert(&marked_text, ctx);
+            });
+            ctx.discard_ime_composition(self.window_id);
+            ctx.notify();
+        }
+    }
+
+    fn clear_ime_marked_text(&mut self, ctx: &mut ViewContext<Self>) {
+        if self.ime_marked_text.take().is_some() {
+            ctx.notify();
+        }
+    }
+
     fn user_insert(&mut self, typed: &str, ctx: &mut ViewContext<Self>) {
+        // The IME sends the committed text as typed characters, which ends the composition.
+        self.clear_ime_marked_text(ctx);
         if ctx.is_self_focused() {
             if let Some(first_char) = typed.chars().next()
                 && typed.chars().count() == 1
@@ -2128,6 +2190,7 @@ impl CodeEditorView {
     }
 
     fn vim_user_insert(&mut self, text: &str, ctx: &mut ViewContext<Self>) {
+        self.clear_ime_marked_text(ctx);
         // Only handle Vim input when this editor is focused.
         if !ctx.is_self_focused() {
             return;
@@ -2364,6 +2427,20 @@ impl View for CodeEditorView {
         {
             stack.add_overlay_child(ChildView::new(find_bar).finish());
         }
+        if let Some(marked_text) = &self.ime_marked_text
+            && editable
+        {
+            stack.add_positioned_child(
+                self.render_ime_marked_text(marked_text, app),
+                OffsetPositioning::offset_from_save_position_element(
+                    render_state.as_ref(app).saved_positions().cursor_id(),
+                    vec2f(0., 0.),
+                    PositionedElementOffsetBounds::ParentByPosition,
+                    PositionedElementAnchor::TopLeft,
+                    ChildAnchor::TopLeft,
+                ),
+            );
+        }
         if self.goto_line_dialog.as_ref(app).is_open() {
             let dialog = Dismiss::new(ChildView::new(&self.goto_line_dialog).finish())
                 .on_dismiss(|ctx, _app| {
@@ -2430,6 +2507,7 @@ impl View for CodeEditorView {
 
     fn on_blur(&mut self, blur_ctx: &BlurContext, ctx: &mut ViewContext<Self>) {
         if blur_ctx.is_self_blurred() {
+            self.commit_ime_marked_text(ctx);
             ctx.notify();
         }
     }

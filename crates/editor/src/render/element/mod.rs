@@ -384,6 +384,22 @@ pub trait RichTextAction<V>: Sized {
         None
     }
 
+    /// Create a new event for an IME composition update. `marked_text` is the uncommitted
+    /// composition and `selected_range` is the IME's selection within it. Defaults to no action.
+    fn ime_set_marked_text(
+        _marked_text: String,
+        _selected_range: Range<usize>,
+        _parent_view: &WeakViewHandle<V>,
+        _ctx: &AppContext,
+    ) -> Option<Self> {
+        None
+    }
+
+    /// Create a new event for the IME discarding its composition. Defaults to no action.
+    fn ime_clear_marked_text(_parent_view: &WeakViewHandle<V>, _ctx: &AppContext) -> Option<Self> {
+        None
+    }
+
     /// Dispatch an event when the mouse wheel is clicked.
     fn middle_mouse_down(ctx: &AppContext) -> Option<Self>;
 
@@ -729,6 +745,16 @@ impl<V: EditorView> RichTextElement<V> {
             return true;
         }
         false
+    }
+
+    fn dispatch_optional_action(&self, action: Option<V::Action>, ctx: &mut EventContext) -> bool {
+        match action {
+            Some(action) => {
+                ctx.dispatch_typed_action(action);
+                true
+            }
+            None => false,
+        }
     }
 
     /// Dispatches user-typed characters to the parent view.
@@ -1242,6 +1268,22 @@ impl<V: EditorView> Element for RichTextElement<V> {
             Some(Event::TypedCharacters { chars }) if !block_handled => {
                 self.handle_typed_characters(chars.clone(), app, ctx)
             }
+            Some(Event::SetMarkedText {
+                marked_text,
+                selected_range,
+            }) if !block_handled => self.dispatch_optional_action(
+                V::Action::ime_set_marked_text(
+                    marked_text.clone(),
+                    selected_range.clone(),
+                    &self.parent_view,
+                    app,
+                ),
+                ctx,
+            ),
+            Some(Event::ClearMarkedText) if !block_handled => self.dispatch_optional_action(
+                V::Action::ime_clear_marked_text(&self.parent_view, app),
+                ctx,
+            ),
             // For editor, we treat modifier state change as a mouse moved event. This allows us to trigger
             // any modifier-hover events (e.g. cmd-hover).
             Some(Event::ModifierStateChanged {
