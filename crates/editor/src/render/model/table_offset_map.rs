@@ -300,8 +300,11 @@ impl TableCellOffsetMap {
         let mut rendered_offset = CharOffset::zero();
         let mut source_idx: usize = 0;
 
-        for fragment in inline {
-            let rendered_chars: Vec<char> = fragment.text.chars().collect();
+        for text in inline
+            .iter()
+            .flat_map(|fragment| fragment.text.split_inclusive(['\n', '<']))
+        {
+            let rendered_chars: Vec<char> = text.chars().collect();
             if rendered_chars.is_empty() {
                 continue;
             }
@@ -309,6 +312,11 @@ impl TableCellOffsetMap {
             let first_rendered = rendered_chars[0];
             while source_idx < total_source_chars {
                 let sc = source_chars[source_idx];
+                if encoded_table_character_len(&source_chars[source_idx..], first_rendered)
+                    .is_some()
+                {
+                    break;
+                }
                 if sc == '\\'
                     && source_idx + 1 < total_source_chars
                     && source_chars[source_idx + 1] == first_rendered
@@ -329,7 +337,11 @@ impl TableCellOffsetMap {
                     break;
                 }
                 let sc = source_chars[source_idx];
-                if sc == '\\'
+                if let Some(length) =
+                    encoded_table_character_len(&source_chars[source_idx..], rendered_char)
+                {
+                    source_idx += length;
+                } else if sc == '\\'
                     && source_idx + 1 < total_source_chars
                     && source_chars[source_idx + 1] == rendered_char
                 {
@@ -411,11 +423,20 @@ impl TableCellOffsetMap {
                 if source_offset >= fragment.visible_source_end {
                     return fragment.rendered_end;
                 }
-                return fragment.rendered_start + (source_offset - fragment.visible_source_start);
+                return (fragment.rendered_start + (source_offset - fragment.visible_source_start))
+                    .min(fragment.rendered_end);
             }
         }
 
         self.rendered_length
+    }
+}
+
+fn encoded_table_character_len(source: &[char], rendered: char) -> Option<usize> {
+    match rendered {
+        '\n' if source.starts_with(&['<', 'b', 'r', '>']) => Some(4),
+        '<' if source.starts_with(&['&', 'l', 't', ';']) => Some(4),
+        _ => None,
     }
 }
 

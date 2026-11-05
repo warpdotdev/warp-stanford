@@ -197,9 +197,16 @@ impl FormattedTextLine {
             Self::Image(image) => format!("{}\n", image.alt_text),
             Self::Table(table) => table.to_internal_format(),
         };
-        // Each `FormattedTextLine` unit represents a complete line. If it doesn't already end in
-        // a newline, add one.
-        if !text.ends_with('\n') {
+        // Inline blocks have a terminating newline in addition to any explicit breaks in their text.
+        if matches!(
+            self,
+            Self::Heading(_)
+                | Self::Line(_)
+                | Self::OrderedList(_)
+                | Self::UnorderedList(_)
+                | Self::TaskList(_)
+        ) || !text.ends_with('\n')
+        {
             text.push('\n');
         }
         text
@@ -285,11 +292,11 @@ impl LineCount for FormattedTextLine {
     fn num_lines(&self) -> usize {
         match self {
             Self::CodeBlock(text) => text.code.matches('\n').count(),
-            Self::Heading(_) => 1,
-            Self::Line(_) => 1,
-            Self::OrderedList(_) => 1,
-            Self::UnorderedList(_) => 1,
-            Self::TaskList(_) => 1,
+            Self::Heading(header) => count_inline_lines(&header.text),
+            Self::Line(text) => count_inline_lines(text),
+            Self::OrderedList(list) => count_inline_lines(&list.indented_text.text),
+            Self::UnorderedList(list) => count_inline_lines(&list.text),
+            Self::TaskList(list) => count_inline_lines(&list.text),
             Self::LineBreak => 0,
             Self::HorizontalRule => 0,
             Self::Embedded(_) => 1,
@@ -297,6 +304,13 @@ impl LineCount for FormattedTextLine {
             Self::Table(table) => 1 + table.rows.len(), // Header + data rows (separator not counted as a line)
         }
     }
+}
+
+fn count_inline_lines(text: &FormattedTextInline) -> usize {
+    1 + text
+        .iter()
+        .map(|fragment| fragment.text.matches('\n').count())
+        .sum::<usize>()
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -362,9 +376,7 @@ impl FormattedTable {
     /// Parse from the internal tab-separated format used in `warp-markdown-table` code blocks.
     pub fn from_internal_format(content: &str) -> Self {
         let parse_line = |line: &str| -> Vec<FormattedTextInline> {
-            line.split('\t')
-                .map(|cell| vec![FormattedTextFragment::plain_text(cell)])
-                .collect()
+            line.split('\t').map(parse_inline_markdown).collect()
         };
 
         let mut lines = content.lines().peekable();
@@ -431,7 +443,10 @@ impl FormattedTable {
     /// Serialize to GFM pipe-table markdown.
     pub fn to_plain_text(&self) -> String {
         fn inline_to_text(inline: &FormattedTextInline) -> String {
-            inline.iter().map(|f| f.text.as_str()).collect()
+            inline
+                .iter()
+                .map(|f| f.text.replace('<', "&lt;").replace('\n', "<br>"))
+                .collect()
         }
 
         let mut lines = Vec::new();
@@ -470,6 +485,9 @@ fn inline_to_markdown(inline: &FormattedTextInline) -> String {
             result.push('`');
             continue;
         }
+
+        // Raw newlines delimit table rows in both internal and GFM formats.
+        text = text.replace('<', "&lt;").replace('\n', "<br>");
 
         if let Some(Hyperlink::Url(url)) = &fragment.styles.hyperlink {
             text = format!("[{text}]({url})");

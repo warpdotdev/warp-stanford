@@ -22,6 +22,162 @@ fn test_parse_empty() {
 }
 
 #[test]
+fn html_break_separates_paragraph_text() {
+    assert_eq!(
+        parse_markdown("First.<br>Second.").unwrap().raw_text(),
+        "First.\nSecond.\n"
+    );
+}
+
+#[test]
+fn html_break_stays_inside_a_table_cell() {
+    let parsed = parse_markdown_with_gfm_tables(
+        "| Feature | Notes |\n| --- | --- |\n| Export | CSV.<br>JSON. |\n",
+    )
+    .unwrap();
+    let FormattedTextLine::Table(table) = &parsed.lines[0] else {
+        panic!("expected a table");
+    };
+    assert_eq!(
+        table.rows[0][1],
+        vec![FormattedTextFragment::plain_text("CSV.\nJSON.")]
+    );
+    assert_eq!(
+        table.to_internal_format(),
+        "Feature\tNotes\nExport\tCSV.<br>JSON.\n"
+    );
+}
+
+#[test]
+fn html_break_accepts_void_tag_variants() {
+    assert_eq!(
+        parse_inline_markdown("a<br>b<br/>c<br />d<BR>e<Br\t/>f"),
+        vec![FormattedTextFragment::plain_text("a\nb\nc\nd\ne\nf")]
+    );
+}
+
+#[test]
+fn html_break_preserves_literal_code_and_escaped_tags() {
+    assert_eq!(
+        parse_inline_markdown("`<br>`"),
+        vec![FormattedTextFragment::inline_code("<br>")]
+    );
+    assert_eq!(
+        parse_inline_markdown("\\<br> &lt;br&gt;"),
+        vec![FormattedTextFragment::plain_text("<br> <br>")]
+    );
+    assert_eq!(
+        parse_markdown("```html\n<br>\n```\n").unwrap().raw_text(),
+        "<br>\n"
+    );
+}
+
+#[test]
+fn html_break_leaves_other_tags_literal() {
+    assert_eq!(
+        parse_inline_markdown("<break> </br> <br / > <br class=\"x\">"),
+        vec![FormattedTextFragment::plain_text(
+            "<break> </br> <br / > <br class=\"x\">"
+        )]
+    );
+}
+
+#[test]
+fn html_break_preserves_enclosing_formatting() {
+    assert_eq!(
+        parse_inline_markdown("**a<br>b**"),
+        vec![FormattedTextFragment::bold("a\nb")]
+    );
+    assert_eq!(
+        parse_inline_markdown("**a<br>**"),
+        vec![FormattedTextFragment::bold("a\n")]
+    );
+    assert_eq!(
+        parse_inline_markdown("*a<br>*"),
+        vec![FormattedTextFragment::italic("a\n")]
+    );
+    assert_eq!(
+        parse_inline_markdown("~~a<br>~~"),
+        vec![FormattedTextFragment::strikethrough("a\n")]
+    );
+    assert_eq!(
+        parse_inline_markdown("<u>a<br></u>"),
+        vec![FormattedTextFragment::underline("a\n")]
+    );
+}
+
+#[test]
+fn html_break_at_block_end_does_not_duplicate_the_terminating_newline() {
+    assert_eq!(parse_markdown("a<br>\nb").unwrap().raw_text(), "a\nb\n");
+    assert_eq!(parse_markdown("**a<br>**\nb").unwrap().raw_text(), "a\nb\n");
+    assert_eq!(
+        parse_markdown("<u>a<br><br></u>\nb").unwrap().raw_text(),
+        "a\n\nb\n"
+    );
+    assert_eq!(parse_markdown("a<br><br>b").unwrap().raw_text(), "a\n\nb\n");
+    assert_eq!(parse_markdown("a<br> \t\nb").unwrap().raw_text(), "a\nb\n");
+    assert_eq!(
+        parse_markdown("**a<br>**<!-- hidden -->\nb")
+            .unwrap()
+            .raw_text(),
+        "a\nb\n"
+    );
+}
+
+#[test]
+fn html_break_counts_rows_for_incremental_updates() {
+    let old = parse_markdown("first<br>second\nold").unwrap();
+    let new = parse_markdown("first<br>second\nnew").unwrap();
+    let delta = compute_formatted_text_delta(old, new);
+    assert_eq!(delta.common_prefix_lines, 2);
+    assert_eq!(delta.old_suffix_formatted_text_lines, 1);
+    assert_eq!(
+        delta.new_suffix,
+        vec![FormattedTextLine::Line(vec![
+            FormattedTextFragment::plain_text("new")
+        ])]
+    );
+}
+
+#[test]
+fn html_break_counts_rows_in_styled_blocks() {
+    assert_eq!(parse_markdown("# a<br>b").unwrap().lines[0].num_lines(), 2);
+    assert_eq!(parse_markdown("- a<br>b").unwrap().lines[0].num_lines(), 2);
+    assert_eq!(parse_markdown("1. a<br>b").unwrap().lines[0].num_lines(), 2);
+    assert_eq!(
+        parse_markdown("- [ ] a<br>b").unwrap().lines[0].num_lines(),
+        2
+    );
+}
+
+#[test]
+fn html_break_table_export_preserves_rows() {
+    let parsed =
+        parse_markdown_with_gfm_tables("| A | B |\n| --- | --- |\n| x<br>y | z |\n").unwrap();
+    let FormattedTextLine::Table(table) = &parsed.lines[0] else {
+        panic!("expected a table");
+    };
+    assert_eq!(
+        table.to_plain_text(),
+        "| A | B |\n| --- | --- |\n| x<br>y | z |"
+    );
+    assert_eq!(
+        parse_markdown_with_gfm_tables(&table.to_plain_text()).unwrap(),
+        parsed
+    );
+}
+
+#[test]
+fn html_break_literal_tag_survives_table_serialization() {
+    let parsed = parse_markdown_with_gfm_tables("| A |\n| --- |\n| &lt;br&gt; |\n").unwrap();
+    let FormattedTextLine::Table(table) = &parsed.lines[0] else {
+        panic!("expected a table");
+    };
+    assert_eq!(table.to_internal_format(), "A\n&lt;br>\n");
+    assert_eq!(parse_inline_markdown("&lt;br>"), table.rows[0][0]);
+}
+
+#[test]
 fn test_parse_line_endings() {
     // This is a regression test for CORE-1958.
     let parsed = parse_markdown("First\rSecond\nThird\r\nFourth").expect("Markdown should parse");
