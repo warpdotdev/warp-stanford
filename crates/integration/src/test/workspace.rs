@@ -11,6 +11,7 @@ use warp::features::FeatureFlag;
 use warp::integration_testing::clipboard::assert_clipboard_contains_string;
 use warp::integration_testing::command_palette::assert_command_palette_is_closed;
 use warp::integration_testing::pane_group::assert_focused_pane_index;
+use warp::integration_testing::settings::{assert_settings_section, click_settings_nav_page};
 use warp::integration_testing::step::new_step_with_default_assertions;
 use warp::integration_testing::terminal::util::{
     ExpectedExitStatus, current_shell_starter_and_version,
@@ -25,18 +26,23 @@ use warp::integration_testing::terminal::{
 use warp::integration_testing::view_getters::{
     command_palette_view, terminal_view, workspace_view,
 };
+use warp::integration_testing::warp_drive::assert_is_left_panel_open;
 use warp::integration_testing::window::{
     add_and_save_window, assert_num_windows_open, save_active_window_id,
 };
 use warp::integration_testing::workspace::{
-    assert_focused_tab_index, assert_tab_count, press_native_modal_button,
+    assert_focused_tab_index, assert_tab_count, assert_tools_panel_active_view_unchanged,
+    press_native_modal_button, save_tools_panel_active_view,
 };
 use warp::search::command_palette::mixer::CommandPaletteItemAction;
 use warp::settings::PaneSettings;
+use warp::settings_view::SettingsSection;
 use warp::terminal::shell::ShellType;
 use warp::themes::theme::AnsiColorIdentifier;
 use warp::workspace::tab_settings::{TabSettings, VerticalTabsDisplayGranularity};
-use warp::workspace::{NEW_TAB_BUTTON_POSITION_ID, WorkspaceAction};
+use warp::workspace::{
+    NEW_TAB_BUTTON_POSITION_ID, TOOLS_PANEL_SETTINGS_BUTTON_POSITION_ID, WorkspaceAction,
+};
 use warpui_core::event::{Event, ModifiersState};
 use warpui_core::integration::{AssertionCallback, AssertionOutcome, StepDataMap, TestStep};
 use warpui_core::keymap::DescriptionContext;
@@ -641,6 +647,42 @@ pub fn test_active_session_follows_focus() -> Builder {
                 .with_keystrokes(&[cmd_or_ctrl_shift("w"), cmd_or_ctrl_shift("w")])
                 .add_assertion(assert_active_session_local_path("~/dir2")),
         )
+}
+
+/// Clicking the Tools Panel's Settings button opens Settings in a new tab without changing the
+/// panel's active view, and clicking it again from another tab focuses that Settings tab on its
+/// current page rather than opening a duplicate.
+pub fn test_tools_panel_settings_button_opens_settings() -> Builder {
+    new_builder()
+        .with_step(wait_until_bootstrapped_single_pane_for_tab(0))
+        .with_step(
+            new_step_with_default_assertions("Open the tools panel")
+                .with_click_on_saved_position("workspace:toggle_left_panel")
+                .add_assertion(assert_is_left_panel_open()),
+        )
+        .with_step(save_tools_panel_active_view())
+        .with_step(
+            new_step_with_default_assertions("Click the tools panel settings button")
+                .with_click_on_saved_position(TOOLS_PANEL_SETTINGS_BUTTON_POSITION_ID)
+                .add_assertion(assert_tab_count(2))
+                .add_assertion(assert_focused_tab_index(1)),
+        )
+        .with_step(click_settings_nav_page(SettingsSection::Appearance))
+        .with_step(assert_settings_section(SettingsSection::Appearance))
+        .with_step(
+            new_step_with_default_assertions("Switch back to the terminal tab")
+                .with_keystrokes(&["cmdorctrl-1"])
+                .add_assertion(assert_focused_tab_index(0))
+                .add_assertion(assert_is_left_panel_open()),
+        )
+        .with_step(assert_tools_panel_active_view_unchanged())
+        .with_step(
+            new_step_with_default_assertions("Click the settings button again")
+                .with_click_on_saved_position(TOOLS_PANEL_SETTINGS_BUTTON_POSITION_ID)
+                .add_assertion(assert_tab_count(2))
+                .add_assertion(assert_focused_tab_index(1)),
+        )
+        .with_step(assert_settings_section(SettingsSection::Appearance))
 }
 
 pub fn test_tab_context_menu_copies_metadata() -> Builder {

@@ -4,6 +4,7 @@ use std::sync::Arc;
 use ai::index::full_source_code_embedding::manager::CodebaseIndexManager;
 use ai::project_context::model::ProjectContextModel;
 use pane_group::{NotebookPane, PaneState, SplitPaneState, TerminalPaneId};
+use pathfinder_geometry::vector::vec2f;
 #[cfg(feature = "local_fs")]
 use repo_metadata::CanonicalizedPath;
 #[cfg(feature = "local_fs")]
@@ -5492,6 +5493,37 @@ fn test_tools_panel_warp_drive_toggle_updates_available_views() {
                 "Warp Drive should be selectable again after re-enabling"
             );
         });
+    });
+}
+
+/// The Settings button must render in the tools panel header even when only one view is
+/// available, so Settings stays reachable from the panel.
+#[test]
+fn test_tools_panel_settings_button_rendered_with_single_view() {
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        let workspace = mock_workspace(&mut app);
+        let window_id = app.read(|ctx| workspace.window_id(ctx));
+
+        workspace.update(&mut app, |workspace, ctx| {
+            workspace.open_left_panel(ctx);
+            workspace.left_panel_view.update(ctx, |left_panel, ctx| {
+                left_panel.update_available_views(vec![ToolPanelView::WarpDrive], ctx);
+            });
+        });
+
+        let settings_button_position = app.update(|ctx| {
+            let presenter = ctx.presenter(window_id).expect("presenter should exist");
+            let mut presenter = presenter.borrow_mut();
+            presenter.build_scene(vec2f(1200., 800.), 1., None, ctx);
+            presenter
+                .position_cache()
+                .get_position(TOOLS_PANEL_SETTINGS_BUTTON_POSITION_ID)
+        });
+        assert!(
+            settings_button_position.is_some(),
+            "Settings button should render in the tools panel header with a single view"
+        );
     });
 }
 

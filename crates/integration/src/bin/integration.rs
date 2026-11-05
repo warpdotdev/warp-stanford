@@ -375,6 +375,7 @@ fn register_tests() -> HashMap<&'static str, BoxedBuilderFn> {
 
     register_test!(test_cycle_active_tab_color_with_keybinding);
     register_test!(test_active_session_follows_focus);
+    register_test!(test_tools_panel_settings_button_opens_settings);
     register_test!(test_tab_context_menu_copies_metadata);
     register_test!(test_vertical_tab_context_menu_copies_metadata);
     register_test!(test_vertical_pane_context_menu_copies_metadata);

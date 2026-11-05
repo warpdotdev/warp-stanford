@@ -227,6 +227,7 @@ integration_tests! {
 
     test_cycle_active_tab_color_with_keybinding,
     test_active_session_follows_focus,
+    test_tools_panel_settings_button_opens_settings,
     test_tab_context_menu_copies_metadata,
     test_vertical_tab_context_menu_copies_metadata,
     test_vertical_pane_context_menu_copies_metadata,
