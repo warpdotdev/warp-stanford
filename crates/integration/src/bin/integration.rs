@@ -249,6 +249,8 @@ fn register_tests() -> HashMap<&'static str, BoxedBuilderFn> {
     register_test!(test_loading_project_workflows);
     register_test!(test_cmd_enter);
     register_test!(test_alias_expansion_has_limit);
+    register_test!(test_alias_expansion_does_not_expand_dash_alias_on_space);
+    register_test!(test_alias_expansion_expands_dot_dot_alias_on_space);
     register_test!(test_command_corrections);
     register_test!(test_start_shell_in_deleted_directory);
     register_test!(test_new_window_inherits_previous_session_directory);

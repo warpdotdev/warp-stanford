@@ -108,7 +108,7 @@ use warpui::{
 
 use self::decorations::InputBackgroundJobOptions;
 pub use self::handoff_compose::{HandoffComposeState, HandoffComposeStateEvent};
-use super::alias::is_expandable_alias;
+use super::alias::{is_expandable_alias, is_expandable_alias_on_space};
 use super::block_list_viewport::InputMode;
 use super::event::{BlockCompletedEvent, BlockType, UserBlockCompleted};
 use super::ligature_settings::LigatureSettings;
@@ -10414,7 +10414,11 @@ impl Input {
         // We only expand aliases if the user has turned the setting on.
         if self.should_expand_aliases(ctx) {
             let alias_value = session_context.session.alias_value(&first_token.item)?;
-            if !is_expandable_alias(&first_token.item, alias_value) {
+            let is_expandable = match executing {
+                Executing::Yes => is_expandable_alias(&first_token.item, alias_value),
+                Executing::No => is_expandable_alias_on_space(&first_token.item, alias_value),
+            };
+            if !is_expandable {
                 return None;
             }
 
