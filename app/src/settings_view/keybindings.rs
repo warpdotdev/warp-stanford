@@ -524,6 +524,15 @@ impl KeybindingsView {
         }
     }
 
+    /// Whether the row at `index` is rendered with the shortcut conflict warning.
+    #[cfg(feature = "integration_tests")]
+    pub fn row_has_conflict(&self, index: usize) -> bool {
+        self.rows
+            .as_ref()
+            .and_then(|rows| rows.get(index))
+            .is_some_and(|row| self.conflict_map.has_conflict(&row.binding.trigger))
+    }
+
     /// Searches for a keybinding as if the user had typed the query into the search
     /// box. Will filter the keybinding list by the query.
     pub fn search_for_binding(&mut self, query: &str, ctx: &mut ViewContext<Self>) {

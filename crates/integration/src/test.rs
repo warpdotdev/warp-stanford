@@ -43,6 +43,7 @@ mod video_recording;
 mod websockets;
 mod workflows;
 mod workspace;
+mod yank;
 
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -208,6 +209,7 @@ use warpui_core::{
 pub use websockets::*;
 pub use workflows::*;
 pub use workspace::*;
+pub use yank::*;
 
 use crate::builder::cargo_target_tmpdir;
 use crate::util::{ShellRcType, skip_if_powershell_core_2303};

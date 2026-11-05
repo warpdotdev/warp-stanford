@@ -562,11 +562,7 @@ pub fn init(app: &mut AppContext) {
             CodeEditorViewAction::DeleteLineLeft,
         )
         .with_context_predicate(text_entry.clone())
-        // Intellij uses `ctrl-Y` to delete a line on Windows/Linux whereas VSCode uses
-        // `ctrl-shift-k`. We use the former because `ctrl-shift-k` would interfere with the binding
-        // to clear all blocks within the blocklist.
-        .with_mac_key_binding("cmd-backspace")
-        .with_linux_or_windows_key_binding("ctrl-y"),
+        .with_mac_key_binding("cmd-backspace"),
         EditableBinding::new(
             "editor_view:cut_all_right",
             "Cut all right",
