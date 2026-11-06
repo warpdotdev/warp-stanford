@@ -87,6 +87,7 @@ impl EditorAndCodeReviewPageView {
             Box::new(ProjectExplorerToggleWidget::default()),
             Box::new(GlobalSearchToggleWidget::default()),
             Box::new(ShowHiddenFilesToggleWidget::default()),
+            Box::new(ProjectExplorerWorkingDirectoryToggleWidget::default()),
             Box::new(FormatOnSaveToggleWidget::default()),
             Box::new(AutoSaveToggleWidget::default()),
         ]);
@@ -153,6 +154,7 @@ pub enum EditorAndCodeReviewPageAction {
     ToggleProjectExplorer,
     ToggleGlobalSearch,
     ToggleShowHiddenFiles,
+    ToggleProjectExplorerUsesWorkingDirectory,
     ToggleFormatOnSave,
     ToggleAutoSave,
     SetCodeEditorLineNumberMode(CodeEditorLineNumberMode),
@@ -194,6 +196,16 @@ impl TypedActionView for EditorAndCodeReviewPageView {
             EditorAndCodeReviewPageAction::ToggleShowHiddenFiles => {
                 CodeSettings::handle(ctx).update(ctx, |settings, ctx| {
                     report_if_error!(settings.show_hidden_files.toggle_and_save_value(ctx));
+                });
+                ctx.notify();
+            }
+            EditorAndCodeReviewPageAction::ToggleProjectExplorerUsesWorkingDirectory => {
+                CodeSettings::handle(ctx).update(ctx, |settings, ctx| {
+                    report_if_error!(
+                        settings
+                            .project_explorer_uses_working_directory
+                            .toggle_and_save_value(ctx)
+                    );
                 });
                 ctx.notify();
             }
@@ -333,6 +345,14 @@ pub fn init_actions_from_parent_view<T: Action + Clone>(
                 )),
                 context,
                 flags::SHOW_HIDDEN_FILES,
+            ),
+            ToggleSettingActionPair::new(
+                "working directory as project explorer root",
+                builder(SettingsAction::EditorAndCodeReview(
+                    EditorAndCodeReviewPageAction::ToggleProjectExplorerUsesWorkingDirectory,
+                )),
+                context,
+                flags::PROJECT_EXPLORER_USES_WORKING_DIRECTORY,
             ),
         ],
         app,
@@ -610,6 +630,50 @@ impl SettingsWidget for ShowHiddenFilesToggleWidget {
                 .finish(),
             Some(
                 "Show dotfiles and hidden files (starting with .) in the project explorer.".into(),
+            ),
+        )
+    }
+}
+
+#[derive(Default)]
+struct ProjectExplorerWorkingDirectoryToggleWidget {
+    switch_state: SwitchStateHandle,
+}
+
+impl SettingsWidget for ProjectExplorerWorkingDirectoryToggleWidget {
+    type View = EditorAndCodeReviewPageView;
+
+    fn search_terms(&self) -> &str {
+        "project explorer file tree root working directory cwd git repository monorepo"
+    }
+
+    fn render(
+        &self,
+        _view: &Self::View,
+        appearance: &Appearance,
+        app: &AppContext,
+    ) -> Box<dyn Element> {
+        let code_settings = CodeSettings::as_ref(app);
+
+        render_body_item::<EditorAndCodeReviewPageAction>(
+            "Use working directory as project explorer root".into(),
+            None,
+            LocalOnlyIconState::Hidden,
+            ToggleState::Enabled,
+            appearance,
+            appearance
+                .ui_builder()
+                .switch(self.switch_state.clone())
+                .check(*code_settings.project_explorer_uses_working_directory)
+                .build()
+                .on_click(move |ctx, _, _| {
+                    ctx.dispatch_typed_action(
+                        EditorAndCodeReviewPageAction::ToggleProjectExplorerUsesWorkingDirectory,
+                    );
+                })
+                .finish(),
+            Some(
+                "Start the project explorer and global search at the terminal's working directory instead of the git repository root. Applies to local sessions.".into(),
             ),
         )
     }
