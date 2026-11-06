@@ -97,9 +97,7 @@ fn markdown_extensions_resolve_to_markdown() {
     }
 }
 
-/// `.svelte` files (including SvelteKit route files like `+page.svelte`) should resolve
-/// to the Svelte language so the editor applies syntax highlighting instead of showing
-/// "Language support is unavailable for this file type".
+/// `.svelte` files, including SvelteKit routes like `+page.svelte`, resolve to Svelte.
 #[test]
 fn svelte_extension_resolves_to_svelte() {
     for filename in ["App.svelte", "+page.svelte"] {
