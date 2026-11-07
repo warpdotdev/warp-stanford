@@ -497,6 +497,7 @@ impl CodeEditorModel {
             text_color: TRANSPARENT,
             baseline_ratio: 0.7,
             fixed_width_tab_size,
+            disable_ligatures: false,
         };
         RichTextStyles {
             base_text: paragraph(Some(4)),

@@ -61,6 +61,53 @@ fn test_merge_adjacent_identical_runs_does_not_merge_across_gaps() {
 }
 
 #[test]
+fn test_disable_ligatures() -> Result<()> {
+    let hack_bytes =
+        include_bytes!("../../../../../app/assets/bundled/fonts/hack/Hack-Regular.ttf");
+    let mut font_db = FontDB::new();
+    let hack = font_db.load_from_bytes("Hack", vec![hack_bytes.to_vec()])?;
+    let hack_font_id = font_db.select_font(hack, Properties::default());
+
+    let layout = |text: &str, disable_ligatures| {
+        layout_line(
+            text,
+            LineStyle {
+                font_size: 16.0,
+                line_height_ratio: 1.2,
+                baseline_ratio: DEFAULT_TOP_BOTTOM_RATIO,
+                fixed_width_tab_size: None,
+                disable_ligatures,
+            },
+            &[(
+                0..text.len(),
+                StyleAndFont::new(hack, Properties::default(), TextStyle::new()),
+            )],
+            &font_db,
+            ClipConfig::default(),
+        )
+    };
+    let glyph_ids = |line: &Line| {
+        line.runs
+            .iter()
+            .flat_map(|run| run.glyphs.iter().map(|glyph| glyph.id))
+            .collect_vec()
+    };
+
+    for text in ["===", "!=", "->"] {
+        let per_char_glyphs = text
+            .chars()
+            .flat_map(|c| glyph_ids(&layout(&c.to_string(), false)))
+            .collect_vec();
+        assert_ne!(glyph_ids(&layout(text, false)), per_char_glyphs, "{text}");
+
+        let line = layout(text, true);
+        assert_eq!(glyph_ids(&line), per_char_glyphs, "{text}");
+        assert!(line.runs.iter().all(|run| run.font_id == hack_font_id));
+    }
+    Ok(())
+}
+
+#[test]
 fn test_char_indices_ligatures() -> Result<()> {
     let mut font_db = FontDB::new();
     let zapfino = font_db.load_from_system("Zapfino")?;
@@ -74,6 +121,7 @@ fn test_char_indices_ligatures() -> Result<()> {
             line_height_ratio: 1.2,
             baseline_ratio: DEFAULT_TOP_BOTTOM_RATIO,
             fixed_width_tab_size: None,
+            disable_ligatures: false,
         },
         &[
             (
@@ -134,6 +182,7 @@ fn test_caret_positions_ligatures() -> Result<()> {
             line_height_ratio: 1.2,
             baseline_ratio: DEFAULT_TOP_BOTTOM_RATIO,
             fixed_width_tab_size: None,
+            disable_ligatures: false,
         },
         &[
             (
@@ -258,6 +307,7 @@ fn test_emoji_caret_positions() -> Result<()> {
             line_height_ratio: 1.2,
             baseline_ratio: DEFAULT_TOP_BOTTOM_RATIO,
             fixed_width_tab_size: None,
+            disable_ligatures: false,
         },
         &[(
             0..12,
@@ -312,6 +362,7 @@ fn test_bidi_caret_positions() -> Result<()> {
             line_height_ratio: 1.2,
             baseline_ratio: DEFAULT_TOP_BOTTOM_RATIO,
             fixed_width_tab_size: None,
+            disable_ligatures: false,
         },
         &[(
             0..text.encode_utf16().count(),
@@ -365,6 +416,7 @@ fn test_layout_text_ligatures() -> Result<()> {
             line_height_ratio: 1.2,
             baseline_ratio: DEFAULT_TOP_BOTTOM_RATIO,
             fixed_width_tab_size: None,
+            disable_ligatures: false,
         },
         &[
             (
@@ -424,6 +476,7 @@ fn test_layout_text_first_line_head_indent_ligatures() -> Result<()> {
             line_height_ratio: 1.2,
             baseline_ratio: DEFAULT_TOP_BOTTOM_RATIO,
             fixed_width_tab_size: None,
+            disable_ligatures: false,
         },
         &[
             (
@@ -490,6 +543,7 @@ fn test_tab_stops_affect_line_width() -> Result<()> {
             line_height_ratio: 1.2,
             baseline_ratio: DEFAULT_TOP_BOTTOM_RATIO,
             fixed_width_tab_size: None,
+            disable_ligatures: false,
         },
         &[(0..strings.chars().count(), style)],
         &font_db,
@@ -503,6 +557,7 @@ fn test_tab_stops_affect_line_width() -> Result<()> {
             line_height_ratio: 1.2,
             baseline_ratio: DEFAULT_TOP_BOTTOM_RATIO,
             fixed_width_tab_size: Some(tab_size),
+            disable_ligatures: false,
         },
         &[(0..tabbed.chars().count(), style)],
         &font_db,
@@ -547,6 +602,7 @@ fn test_tab_stops_do_not_drift_over_long_runs() -> Result<()> {
             line_height_ratio: 1.2,
             baseline_ratio: DEFAULT_TOP_BOTTOM_RATIO,
             fixed_width_tab_size: None,
+            disable_ligatures: false,
         },
         &[(0..strings.chars().count(), style)],
         &font_db,
@@ -563,6 +619,7 @@ fn test_tab_stops_do_not_drift_over_long_runs() -> Result<()> {
             line_height_ratio: 1.2,
             baseline_ratio: DEFAULT_TOP_BOTTOM_RATIO,
             fixed_width_tab_size: Some(tab_size),
+            disable_ligatures: false,
         },
         &[(0..tabbed.chars().count(), style)],
         &font_db,
@@ -598,6 +655,7 @@ fn test_layout_text_large_first_line_head_indent_ligatures() -> Result<()> {
             line_height_ratio: 1.2,
             baseline_ratio: DEFAULT_TOP_BOTTOM_RATIO,
             fixed_width_tab_size: None,
+            disable_ligatures: false,
         },
         &[
             (
@@ -656,6 +714,7 @@ fn test_layout_text_last_line_clipped_ligatures() -> Result<()> {
             line_height_ratio: 1.2,
             baseline_ratio: DEFAULT_TOP_BOTTOM_RATIO,
             fixed_width_tab_size: None,
+            disable_ligatures: false,
         },
         &[
             (

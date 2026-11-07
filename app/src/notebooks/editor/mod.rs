@@ -213,6 +213,7 @@ pub fn rich_text_styles(appearance: &Appearance, font_settings: &FontSettings) -
         text_color: theme.main_text_color(theme.background()).into_solid(),
         baseline_ratio,
         fixed_width_tab_size: None,
+        disable_ligatures: false,
     };
 
     RichTextStyles {
@@ -225,6 +226,7 @@ pub fn rich_text_styles(appearance: &Appearance, font_settings: &FontSettings) -
             text_color: theme.main_text_color(theme.background()).into_solid(),
             baseline_ratio,
             fixed_width_tab_size: Some(4),
+            disable_ligatures: false,
         },
         code_background: theme.background().into(),
         embedding_background: theme.surface_2().into(),
@@ -236,6 +238,7 @@ pub fn rich_text_styles(appearance: &Appearance, font_settings: &FontSettings) -
             text_color: theme.main_text_color(theme.surface_2()).into_solid(),
             baseline_ratio,
             fixed_width_tab_size: Some(4),
+            disable_ligatures: false,
         },
         code_border: Border::all(1.).with_border_fill(theme.surface_3()),
         placeholder_color: appearance

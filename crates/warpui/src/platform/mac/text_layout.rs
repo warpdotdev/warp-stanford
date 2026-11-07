@@ -548,7 +548,11 @@ fn create_attributed_string(
 
         let cf_range = CFRange::init(utf16_start as isize, (utf16_end - utf16_start) as isize);
         let font_id = font_db.select_font(style_and_font.font_family, style_and_font.properties);
-        let native_font = font_db.native_font(font_id, line_style.font_size);
+        let native_font = if line_style.disable_ligatures {
+            font_db.native_font_without_ligatures(font_id, line_style.font_size)
+        } else {
+            font_db.native_font(font_id, line_style.font_size)
+        };
 
         let attributes_pairs = text_style_as_cf_type_pairs(&style_and_font.style);
         unsafe {

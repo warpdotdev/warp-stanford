@@ -78,6 +78,7 @@ use crate::editor::InteractionState;
 use crate::features::FeatureFlag;
 use crate::notebooks::editor::rich_text_styles;
 use crate::settings::{AppEditorSettings, CodeEditorLineNumberMode, FontSettings};
+use crate::terminal::ligature_settings::{LigatureSettings, should_use_ligature_rendering};
 use crate::view_components::find::FindDirection;
 
 mod actions;
@@ -301,11 +302,15 @@ impl CodeEditorView {
             appearance_handle.as_ref(ctx),
             font_settings_handle.as_ref(ctx),
             render_options.line_height_override,
+            !should_use_ligature_rendering(ctx),
         );
         ctx.subscribe_to_model(&appearance_handle, |me, _, _, ctx| {
             me.handle_appearance_or_font_change(ctx);
         });
         ctx.subscribe_to_model(&font_settings_handle, |me, _, _, ctx| {
+            me.handle_appearance_or_font_change(ctx);
+        });
+        ctx.subscribe_to_model(&LigatureSettings::handle(ctx), |me, _, _, ctx| {
             me.handle_appearance_or_font_change(ctx);
         });
         let app_editor_settings_handle = AppEditorSettings::handle(ctx);
@@ -1380,6 +1385,7 @@ impl CodeEditorView {
             Appearance::as_ref(ctx),
             FontSettings::as_ref(ctx),
             self.display_options.line_height_override,
+            !should_use_ligature_rendering(ctx),
         );
         self.model.update(ctx, move |model, ctx| {
             model.handle_appearance_or_font_change(new_styles, ctx);
@@ -2463,6 +2469,7 @@ pub fn code_text_styles(
     appearance: &Appearance,
     font_settings: &FontSettings,
     line_height_override: Option<f32>,
+    disable_ligatures: bool,
 ) -> RichTextStyles {
     let mut styling = rich_text_styles(appearance, font_settings);
     let theme = appearance.theme();
@@ -2474,6 +2481,7 @@ pub fn code_text_styles(
         text_color: theme.main_text_color(theme.background()).into_solid(),
         baseline_ratio: 0.8,
         fixed_width_tab_size: Some(4),
+        disable_ligatures,
     };
     styling.block_spacings.text = BlockSpacing {
         margin: Margin::uniform(0.).with_left(1.),
