@@ -140,7 +140,7 @@ use warp::integration_testing::terminal::{
     assert_input_at_top_of_terminal, assert_input_mode,
     assert_input_not_at_either_edge_of_terminal, assert_long_running_block_executing,
     assert_long_running_block_executing_for_single_terminal_in_tab, assert_model_term_mode,
-    assert_pane_group_has_state, assert_scroll_position,
+    assert_output_taller_than_content_area, assert_pane_group_has_state, assert_scroll_position,
     assert_selected_block_index_is_first_renderable,
     assert_selected_block_index_is_last_renderable, assert_single_terminal_in_tab_bootstrapped,
     assert_snackbar_is_not_visible, assert_snackbar_is_visible, assert_terminal_bootstrapped,
@@ -3039,6 +3039,74 @@ pub fn test_block_based_snackbar_not_visible_for_pager_command_input_at_bottom()
                     ScrollPosition::FollowsBottomOfMostRecentBlock,
                 ))
                 .add_assertion(assert_no_pending_model_events())
+                .add_assertion(assert_snackbar_is_not_visible(0)),
+        )
+}
+
+/// Ensure that the block-based-snackbar stays hidden once paging through a pager command makes the
+/// block's output taller than the content area. Otherwise, it covers the top rows of the page.
+/// Scrolling up inside the pager shows the snackbar again, and the next pager key hides it.
+pub fn test_block_based_snackbar_not_visible_after_paging_pager_command() -> Builder {
+    new_builder()
+        .with_user_defaults(user_defaults::input_mode(InputMode::PinnedToBottom))
+        .with_step(wait_until_bootstrapped_single_pane_for_tab(0))
+        .with_step(execute_command_for_single_terminal_in_tab(
+            0,
+            "seq 1 400 > foo".into(),
+            ExpectedExitStatus::Success,
+            (),
+        ))
+        .with_step(execute_long_running_command(0, "less -X foo".into()))
+        .with_step(
+            TestStep::new("Page forward until the output is taller than the content area")
+                .with_typed_characters(&[" ", " ", " ", " "]),
+        )
+        .with_step(
+            TestStep::new("Ensure the snackbar is hidden while paging")
+                .set_timeout(Duration::from_secs(10))
+                .add_assertion(assert_output_taller_than_content_area(0))
+                .add_assertion(assert_scroll_position(
+                    0,
+                    ScrollPosition::FollowsBottomOfMostRecentBlock,
+                ))
+                .add_assertion(assert_snackbar_is_not_visible(0)),
+        )
+        .with_step(
+            TestStep::new("Scroll up inside the pager")
+                .with_action(|app, window_id, _| {
+                    let terminal_view_id = single_terminal_view_for_tab(app, window_id, 0).id();
+                    app.dispatch_typed_action(
+                        window_id,
+                        &[terminal_view_id],
+                        &TerminalAction::Scroll {
+                            delta: Lines::new(5.),
+                        },
+                    );
+                })
+                .set_timeout(Duration::from_secs(10))
+                .add_assertion(|app, window_id| {
+                    let terminal_view = single_terminal_view_for_tab(app, window_id, 0);
+                    terminal_view.read(app, |view, _ctx| {
+                        let scroll_position = view.scroll_position();
+                        async_assert!(
+                            matches!(
+                                scroll_position,
+                                ScrollPosition::FixedWithinLongRunningBlock { .. }
+                            ),
+                            "Expected a fixed position within the pager, got {scroll_position:?}"
+                        )
+                    })
+                })
+                .add_assertion(assert_snackbar_is_visible(0)),
+        )
+        .with_step(
+            TestStep::new("Page forward again")
+                .with_typed_characters(&[" "])
+                .set_timeout(Duration::from_secs(10))
+                .add_assertion(assert_scroll_position(
+                    0,
+                    ScrollPosition::FollowsBottomOfMostRecentBlock,
+                ))
                 .add_assertion(assert_snackbar_is_not_visible(0)),
         )
 }

@@ -92,6 +92,7 @@ integration_tests! {
     test_block_based_snackbar_small_window,
     test_block_based_snackbar_appears_for_running_command_input_at_bottom,
     test_block_based_snackbar_not_visible_for_pager_command_input_at_bottom,
+    test_block_based_snackbar_not_visible_after_paging_pager_command,
     test_block_based_snackbar_appears_for_running_command_pinned_to_top,
     test_block_based_snackbar_not_visible_for_pager_command_pinned_to_top,
     test_block_based_snackbar_appears_for_running_command_waterfall_mode,
