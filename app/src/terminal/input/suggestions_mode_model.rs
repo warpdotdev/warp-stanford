@@ -66,6 +66,11 @@ impl InputSuggestionsModeModel {
         });
     }
 
+    /// Replaces the buffer state that will be restored when the current menu is dismissed.
+    pub fn update_buffer_to_restore(&mut self, buffer_state: BufferState) {
+        self.buffer_to_restore = Some(buffer_state);
+    }
+
     /// Closes the current menu, restoring the buffer if it was snapshotted on open.
     pub fn close_and_restore_buffer(&mut self, ctx: &mut ModelContext<Self>) {
         if self.is_closed() {

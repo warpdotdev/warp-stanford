@@ -11281,7 +11281,33 @@ impl Input {
                         // User query menu handles its own state
                     }
                     InputSuggestionsMode::InlineHistoryMenu { .. } => {
-                        let mismatched = if self.is_cloud_mode_input_v2_composing(ctx) {
+                        let is_cloud_mode = self.is_cloud_mode_input_v2_composing(ctx);
+                        // The user is editing their search text, not a previewed row, so this
+                        // edit is a new search rather than a reason to close the menu.
+                        let is_search_edit = !is_cloud_mode
+                            && matches!(
+                                edit_origin,
+                                EditOrigin::UserTyped | EditOrigin::UserInitiated
+                            )
+                            && !self
+                                .inline_history_menu_view
+                                .as_ref(ctx)
+                                .is_previewing_selection();
+                        let mismatched = if is_search_edit {
+                            let editor = self.editor.as_ref(ctx);
+                            let query_text = editor.buffer_text(ctx);
+                            let buffer_state = BufferState::new(
+                                query_text.clone(),
+                                editor.single_cursor_to_point(ctx),
+                            );
+                            self.suggestions_mode_model.update(ctx, |model, _| {
+                                model.update_buffer_to_restore(buffer_state);
+                            });
+                            self.inline_history_menu_view.update(ctx, |view, ctx| {
+                                view.search_for_edited_text(query_text, ctx);
+                            });
+                            false
+                        } else if is_cloud_mode {
                             self.cloud_mode_v2_history_menu_view
                                 .as_ref()
                                 .and_then(|view| view.as_ref(ctx).selected_query_text(ctx))
