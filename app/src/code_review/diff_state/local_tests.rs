@@ -456,3 +456,52 @@ async fn num_lines_in_file_if_non_binary_errors_for_directory() {
     let result = LocalDiffStateModel::num_lines_in_file_if_non_binary(dir.path()).await;
     assert!(result.is_err());
 }
+
+#[tokio::test]
+async fn diff_metadata_against_head_counts_renamed_and_non_ascii_files() {
+    let repo_dir = tempfile::tempdir().expect("create temp repo dir");
+    let repo_path = repo_dir.path();
+    let ten_lines: String = (1..=10).map(|i| format!("line {i}\n")).collect();
+
+    run_git_command(repo_path, &["init", "-b", "main"])
+        .await
+        .expect("git init");
+    run_git_command(repo_path, &["config", "user.email", "test@test.com"])
+        .await
+        .expect("git config email");
+    run_git_command(repo_path, &["config", "user.name", "Test"])
+        .await
+        .expect("git config name");
+    std::fs::write(repo_path.join("old.txt"), &ten_lines).expect("write old.txt");
+    std::fs::write(repo_path.join("café.txt"), &ten_lines).expect("write café.txt");
+    run_git_command(repo_path, &["add", "."])
+        .await
+        .expect("git add");
+    run_git_command(repo_path, &["commit", "-m", "initial"])
+        .await
+        .expect("git commit");
+
+    run_git_command(repo_path, &["mv", "old.txt", "new.txt"])
+        .await
+        .expect("git mv");
+    std::fs::write(repo_path.join("new.txt"), format!("{ten_lines}added\n"))
+        .expect("modify new.txt");
+    std::fs::write(repo_path.join("café.txt"), format!("{ten_lines}added\n"))
+        .expect("modify café.txt");
+
+    let metadata = diff_metadata_against_head(repo_path)
+        .await
+        .expect("diff metadata");
+
+    let mut files: Vec<_> = metadata
+        .files
+        .into_iter()
+        .map(|entry| (entry.path, entry.additions, entry.deletions))
+        .collect();
+    files.sort();
+    assert_eq!(
+        files,
+        [("café.txt".to_owned(), 1, 0), ("new.txt".to_owned(), 1, 0)]
+    );
+    assert_eq!(metadata.aggregate_stats.total_additions, 2);
+}

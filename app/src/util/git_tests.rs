@@ -5,8 +5,8 @@ use command::r#async::Command;
 use tempfile::TempDir;
 
 use super::{
-    RepositoryInfo, detect_current_branch, detect_current_branch_display, get_pr_for_branch,
-    is_gh_auth_error, is_gh_missing_error,
+    NumstatEntry, RepositoryInfo, detect_current_branch, detect_current_branch_display,
+    get_pr_for_branch, is_gh_auth_error, is_gh_missing_error,
 };
 
 /// Helper: run a git command inside the given repo directory.
@@ -438,4 +438,137 @@ async fn detached_tag_display_returns_short_sha() {
         full_sha.starts_with(&result),
         "expected {full_sha} to start with {result}"
     );
+}
+
+#[test]
+fn parse_numstat_z_keeps_paths_verbatim() {
+    let output = "1\t0\tcafé.txt\0\
+                  2\t1\tmy folder/file one.txt\0\
+                  1\t0\tsay \"hi\".txt\0\
+                  1\t0\ttab\there.txt\0";
+
+    let paths: Vec<_> = super::parse_numstat_z(output)
+        .into_iter()
+        .map(|entry| entry.path)
+        .collect();
+
+    assert_eq!(
+        paths,
+        [
+            "café.txt",
+            "my folder/file one.txt",
+            "say \"hi\".txt",
+            "tab\there.txt"
+        ]
+    );
+}
+
+#[test]
+fn parse_numstat_z_uses_new_path_for_renames() {
+    let output = "0\t0\t\0old name.txt\0new name.txt\0\
+                  3\t1\t\0src/a.txt\0src/b.txt\0\
+                  4\t2\tafter.txt\0";
+
+    assert_eq!(
+        super::parse_numstat_z(output),
+        [
+            NumstatEntry {
+                path: "new name.txt".to_owned(),
+                additions: 0,
+                deletions: 0,
+                is_binary: false,
+            },
+            NumstatEntry {
+                path: "src/b.txt".to_owned(),
+                additions: 3,
+                deletions: 1,
+                is_binary: false,
+            },
+            NumstatEntry {
+                path: "after.txt".to_owned(),
+                additions: 4,
+                deletions: 2,
+                is_binary: false,
+            },
+        ]
+    );
+    // A rename cut off before its new path is dropped rather than misread.
+    assert_eq!(super::parse_numstat_z("1\t0\t\0old.txt"), []);
+}
+
+#[test]
+fn parse_numstat_z_flags_binary_files() {
+    assert_eq!(
+        super::parse_numstat_z("-\t-\timage.png\0-\t-\t\0a.bin\0b.bin\0"),
+        [
+            NumstatEntry {
+                path: "image.png".to_owned(),
+                additions: 0,
+                deletions: 0,
+                is_binary: true,
+            },
+            NumstatEntry {
+                path: "b.bin".to_owned(),
+                additions: 0,
+                deletions: 0,
+                is_binary: true,
+            },
+        ]
+    );
+}
+
+#[cfg(feature = "local_fs")]
+#[tokio::test]
+async fn file_change_entries_report_unquoted_and_renamed_paths() {
+    let (_dir, repo) = init_repo().await;
+    std::fs::write(repo.join("café.txt"), "a\n").expect("write café.txt");
+    std::fs::write(repo.join("old name.txt"), "a\n").expect("write old name.txt");
+    git(&repo, &["add", "."]).await;
+    git(&repo, &["commit", "-m", "add files"]).await;
+
+    std::fs::write(repo.join("café.txt"), "a\nb\n").expect("modify café.txt");
+    git(&repo, &["mv", "old name.txt", "new name.txt"]).await;
+    std::fs::write(repo.join("ünïcode new.txt"), "1\n2\n3\n").expect("write untracked file");
+
+    let mut entries: Vec<_> = super::get_file_change_entries(&repo, true)
+        .await
+        .expect("file change entries")
+        .into_iter()
+        .map(|entry| (entry.path, entry.additions, entry.deletions))
+        .collect();
+    entries.sort();
+
+    assert_eq!(
+        entries,
+        [
+            ("café.txt".to_owned(), 1, 0),
+            ("new name.txt".to_owned(), 0, 0),
+            ("ünïcode new.txt".to_owned(), 3, 0),
+        ]
+    );
+}
+
+#[cfg(feature = "local_fs")]
+#[tokio::test]
+async fn committed_branch_files_report_unquoted_and_renamed_paths() {
+    let (_dir, repo) = init_repo().await;
+    std::fs::write(repo.join("old name.txt"), "a\n").expect("write old name.txt");
+    git(&repo, &["add", "."]).await;
+    git(&repo, &["commit", "-m", "add file"]).await;
+    git(&repo, &["checkout", "-b", "feature"]).await;
+
+    git(&repo, &["mv", "old name.txt", "new name.txt"]).await;
+    std::fs::write(repo.join("café.txt"), "a\nb\n").expect("write café.txt");
+    git(&repo, &["add", "."]).await;
+    git(&repo, &["commit", "-m", "rename and add"]).await;
+
+    let mut paths: Vec<_> = super::get_committed_branch_file_entries(&repo)
+        .await
+        .expect("committed branch files")
+        .into_iter()
+        .map(|entry| entry.path)
+        .collect();
+    paths.sort();
+
+    assert_eq!(paths, ["café.txt", "new name.txt"]);
 }

@@ -42,7 +42,7 @@ use crate::terminal::local_shell::LocalShellState;
 use crate::throttle::throttle;
 use crate::util::git::{
     Commit, FileChangeEntry, detect_current_branch, detect_main_branch, get_unpushed_commits,
-    parse_unified_diff_header,
+    parse_numstat_z, parse_unified_diff_header,
 };
 #[cfg(feature = "local_fs")]
 use crate::util::git::{get_all_branches, git_operation_in_progress};
@@ -2808,41 +2808,28 @@ impl LocalDiffStateModel {
         commit: &str,
     ) -> Result<HashMap<String, GitNumStatMetadata>> {
         log::debug!(
-            "[GIT OPERATION] local.rs get_diff_metadata_using_numstat git diff --numstat {commit}"
+            "[GIT OPERATION] local.rs get_diff_metadata_using_numstat git diff --numstat -z {commit}"
         );
-        let numstat_output = match run_git_command(repo_path, &["diff", "--numstat", commit]).await
-        {
-            Ok(output) => output,
-            Err(_) => {
-                // If numstat fails, return empty set
-                return Ok(HashMap::new());
-            }
-        };
+        let numstat_output =
+            match run_git_command(repo_path, &["diff", "--numstat", "-z", commit]).await {
+                Ok(output) => output,
+                Err(_) => {
+                    // If numstat fails, return empty set
+                    return Ok(HashMap::new());
+                }
+            };
 
-        let mut diff_metadata = std::collections::HashMap::new();
-
-        for line in numstat_output.lines() {
-            if line.is_empty() {
-                continue;
-            }
-
-            let parts: Vec<&str> = line.split('\t').collect();
-            if parts.len() >= 3 {
-                let additions = parts[0];
-                let deletions = parts[1];
-                let filename = parts[2];
-
+        Ok(parse_numstat_z(&numstat_output)
+            .into_iter()
+            .map(|entry| {
                 let metadata = GitNumStatMetadata {
-                    lines_added: additions.parse().unwrap_or(0),
-                    lines_removed: deletions.parse().unwrap_or(0),
-                    is_binary_file: additions == "-" && deletions == "-",
+                    lines_added: entry.additions,
+                    lines_removed: entry.deletions,
+                    is_binary_file: entry.is_binary,
                 };
-
-                diff_metadata.insert(filename.to_string(), metadata);
-            }
-        }
-
-        Ok(diff_metadata)
+                (entry.path, metadata)
+            })
+            .collect())
     }
 
     /// Get binary files using git diff --numstat against a specific commit

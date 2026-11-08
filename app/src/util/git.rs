@@ -225,12 +225,15 @@ pub async fn get_repo_git_summary(repo_root: &Path) -> Option<RepoGitSummary> {
 
     // Also count lines in untracked files to match what the git diff chip shows.
     log::debug!(
-        "[GIT OPERATION] git.rs get_repo_git_summary git ls-files --others --exclude-standard"
+        "[GIT OPERATION] git.rs get_repo_git_summary git ls-files --others --exclude-standard -z"
     );
-    if let Ok(untracked_output) =
-        run_git_command(repo_root, &["ls-files", "--others", "--exclude-standard"]).await
+    if let Ok(untracked_output) = run_git_command(
+        repo_root,
+        &["ls-files", "--others", "--exclude-standard", "-z"],
+    )
+    .await
     {
-        for file_name in untracked_output.lines() {
+        for file_name in untracked_output.split('\0') {
             if file_name.is_empty() {
                 continue;
             }
@@ -265,6 +268,61 @@ pub struct FileChangeEntry {
     pub deletions: usize,
 }
 
+impl From<NumstatEntry> for FileChangeEntry {
+    fn from(entry: NumstatEntry) -> Self {
+        Self {
+            path: entry.path,
+            additions: entry.additions,
+            deletions: entry.deletions,
+        }
+    }
+}
+
+/// One file from `git diff --numstat -z` output.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct NumstatEntry {
+    /// The file's current path. For a rename, this is the new path.
+    pub path: String,
+    pub additions: usize,
+    pub deletions: usize,
+    /// Git reports `-` instead of line counts for binary files; their counts are 0.
+    pub is_binary: bool,
+}
+
+/// Parses `git diff --numstat -z` output.
+///
+/// Without `-z`, git quotes paths with special characters (e.g. `"caf\303\251.txt"`) and writes
+/// renames as `old => new`, so the reported paths don't match the files on disk. With `-z`, paths
+/// are verbatim and a rename is written as `<added>\t<deleted>\t\0<old path>\0<new path>\0`.
+pub(crate) fn parse_numstat_z(output: &str) -> Vec<NumstatEntry> {
+    let mut records = output.split('\0');
+    let mut entries = Vec::new();
+    while let Some(record) = records.next() {
+        // Paths may contain tabs, so only split off the two count fields.
+        let mut fields = record.splitn(3, '\t');
+        let (Some(additions), Some(deletions), Some(path)) =
+            (fields.next(), fields.next(), fields.next())
+        else {
+            continue;
+        };
+        let path = if path.is_empty() {
+            let (Some(_old_path), Some(new_path)) = (records.next(), records.next()) else {
+                break;
+            };
+            new_path
+        } else {
+            path
+        };
+        entries.push(NumstatEntry {
+            path: path.to_owned(),
+            additions: additions.parse().unwrap_or(0),
+            deletions: deletions.parse().unwrap_or(0),
+            is_binary: additions == "-" && deletions == "-",
+        });
+    }
+    entries
+}
+
 /// Returns per-file change entries. When `include_unstaged` is true, returns all
 /// uncommitted changes (staged + unstaged + untracked) vs HEAD; otherwise only staged changes.
 #[cfg(feature = "local_fs")]
@@ -273,32 +331,25 @@ pub async fn get_file_change_entries(
     include_unstaged: bool,
 ) -> Result<Vec<FileChangeEntry>> {
     let args: &[&str] = if include_unstaged {
-        &["diff", "--numstat", "HEAD"]
+        &["diff", "--numstat", "-z", "HEAD"]
     } else {
-        &["diff", "--cached", "--numstat"]
+        &["diff", "--cached", "--numstat", "-z"]
     };
     let output = run_git_command(repo_path, args).await.unwrap_or_default();
-    let mut entries = Vec::new();
-    for line in output.lines() {
-        if line.is_empty() {
-            continue;
-        }
-        let parts: Vec<&str> = line.split('\t').collect();
-        if parts.len() >= 3 {
-            entries.push(FileChangeEntry {
-                path: parts[2].to_string(),
-                additions: parts[0].parse().unwrap_or(0),
-                deletions: parts[1].parse().unwrap_or(0),
-            });
-        }
-    }
+    let mut entries: Vec<FileChangeEntry> = parse_numstat_z(&output)
+        .into_iter()
+        .map(FileChangeEntry::from)
+        .collect();
 
     // Also include untracked files when showing all changes.
     if include_unstaged
-        && let Ok(untracked) =
-            run_git_command(repo_path, &["ls-files", "--others", "--exclude-standard"]).await
+        && let Ok(untracked) = run_git_command(
+            repo_path,
+            &["ls-files", "--others", "--exclude-standard", "-z"],
+        )
+        .await
     {
-        for file_name in untracked.lines() {
+        for file_name in untracked.split('\0') {
             if file_name.is_empty() {
                 continue;
             }
@@ -346,27 +397,14 @@ pub async fn get_committed_branch_file_entries(repo_path: &Path) -> Result<Vec<F
 
     // `git diff --numstat <merge_base> HEAD` is the committed-only diff
     // (equivalent to `main...HEAD`): no working-tree edits, no untracked files.
-    let output = run_git_command(repo_path, &["diff", "--numstat", &merge_base, "HEAD"])
+    let output = run_git_command(repo_path, &["diff", "--numstat", "-z", &merge_base, "HEAD"])
         .await
         .unwrap_or_default();
-    let mut entries = Vec::new();
-    for line in output.lines() {
-        if line.is_empty() {
-            continue;
-        }
-        let parts: Vec<&str> = line.split('\t').collect();
-        if parts.len() >= 3 {
-            entries.push(FileChangeEntry {
-                path: parts[2].to_string(),
-                // Binary files render as "-\t-\t<path>"; parse failures fall back
-                // to 0, mirroring `get_file_change_entries`.
-                additions: parts[0].parse().unwrap_or(0),
-                deletions: parts[1].parse().unwrap_or(0),
-            });
-        }
-    }
 
-    Ok(entries)
+    Ok(parse_numstat_z(&output)
+        .into_iter()
+        .map(FileChangeEntry::from)
+        .collect())
 }
 
 #[cfg(not(feature = "local_fs"))]
