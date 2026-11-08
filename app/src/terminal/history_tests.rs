@@ -1020,3 +1020,194 @@ fn is_appendable_vs_is_queryable() {
         });
     });
 }
+
+#[test]
+fn shell_expanded_command_only_trusts_zsh_history_expansion() {
+    let zsh = |typed, reported| History::shell_expanded_command(typed, reported, ShellType::Zsh);
+
+    assert_eq!(zsh("!!", "echo hello"), Some("echo hello"));
+    assert_eq!(zsh("cat !$", "cat notes.txt"), Some("cat notes.txt"));
+    assert_eq!(zsh("!!", "echo hello\n"), Some("echo hello"));
+
+    assert_eq!(zsh("echo hello", "something else"), None);
+    assert_eq!(zsh(" echo 'hi!' ", "echo 'hi!'"), None);
+    assert_eq!(zsh("!!", "  "), None);
+
+    // Bash may report a truncated command, so it must not overwrite what was typed.
+    assert_eq!(
+        History::shell_expanded_command("!!", "echo hello", ShellType::Bash),
+        None
+    );
+}
+
+/// Initializes a Zsh session whose history file contains `history_file_commands`.
+async fn init_zsh_history(
+    history_handle: &mut ModelHandle<History>,
+    history_file_commands: Vec<String>,
+    app: &mut App,
+) -> SessionId {
+    let session = Arc::new(Session::new(
+        SessionInfo::new_for_test()
+            .with_id(0)
+            .with_shell_type(ShellType::Zsh),
+        Arc::new(TestCommandExecutor::default()),
+    ));
+    let session_id = session.id();
+    history_handle.update(app, move |history, ctx| {
+        history.init_session_with(session, async move { history_file_commands }, ctx);
+    });
+    History::initialized_sessions(history_handle, app, vec![session_id]).await;
+    session_id
+}
+
+fn entry_started_at(
+    session_id: SessionId,
+    command: &str,
+    start_ts: chrono::DateTime<Local>,
+) -> HistoryEntry {
+    HistoryEntry {
+        start_ts: Some(start_ts),
+        ..HistoryEntry::with_session_id(session_id, command)
+    }
+}
+
+fn visible_commands(history: &History, session_id: SessionId) -> Vec<String> {
+    history
+        .commands(session_id)
+        .unwrap_or_default()
+        .iter()
+        .map(|entry| entry.command.clone())
+        .collect()
+}
+
+#[test]
+fn replace_command_updates_entry_without_listing_expansion_twice() {
+    App::test((), |mut app| async move {
+        let mut history_handle = app.add_model(|_| History::default());
+        let session_id =
+            init_zsh_history(&mut history_handle, vec!["ls".to_owned()], &mut app).await;
+        let first_ts = Local::now();
+        let bang_bang_ts = first_ts + chrono::Duration::seconds(1);
+
+        history_handle.update(&mut app, |history, _| {
+            history.append_commands(
+                session_id,
+                vec![entry_started_at(session_id, "echo hello", first_ts)],
+            );
+            history.append_commands(
+                session_id,
+                vec![entry_started_at(session_id, "!!", bang_bang_ts)],
+            );
+            history.replace_command(session_id, bang_bang_ts, "!!", "echo hello".to_owned());
+        });
+
+        history_handle.read(&app, |history, _| {
+            assert_eq!(
+                visible_commands(history, session_id),
+                vec!["ls".to_owned(), "echo hello".to_owned()]
+            );
+            // The surviving entry is the most recent one, so it keeps that run's metadata.
+            let commands = history.commands(session_id).unwrap_or_default();
+            assert_eq!(commands[1].start_ts, Some(bang_bang_ts));
+        });
+    });
+}
+
+#[test]
+fn replace_command_hides_matching_history_file_entry() {
+    App::test((), |mut app| async move {
+        let mut history_handle = app.add_model(|_| History::default());
+        let session_id = init_zsh_history(
+            &mut history_handle,
+            vec!["echo hello".to_owned(), "ls".to_owned()],
+            &mut app,
+        )
+        .await;
+        let start_ts = Local::now();
+
+        history_handle.update(&mut app, |history, _| {
+            history.append_commands(
+                session_id,
+                vec![entry_started_at(session_id, "!-2", start_ts)],
+            );
+            history.replace_command(session_id, start_ts, "!-2", "echo hello".to_owned());
+        });
+
+        history_handle.read(&app, |history, _| {
+            assert_eq!(
+                visible_commands(history, session_id),
+                vec!["ls".to_owned(), "echo hello".to_owned()]
+            );
+        });
+    });
+}
+
+#[test]
+fn replace_command_ignores_entries_that_do_not_match() {
+    App::test((), |mut app| async move {
+        let mut history_handle = app.add_model(|_| History::default());
+        let session_id = init_zsh_history(&mut history_handle, vec![], &mut app).await;
+        let start_ts = Local::now();
+        let other_ts = start_ts + chrono::Duration::seconds(1);
+
+        history_handle.update(&mut app, |history, _| {
+            history.append_commands(
+                session_id,
+                vec![entry_started_at(session_id, "!!", start_ts)],
+            );
+            // The start time doesn't match.
+            history.replace_command(session_id, other_ts, "!!", "wrong".to_owned());
+            // The current text doesn't match.
+            history.replace_command(session_id, start_ts, "!$", "wrong".to_owned());
+        });
+
+        history_handle.read(&app, |history, _| {
+            assert_eq!(visible_commands(history, session_id), vec!["!!".to_owned()]);
+        });
+    });
+}
+
+#[test]
+fn replace_command_applies_while_history_file_is_loading() {
+    App::test((), |mut app| async move {
+        let mut history_handle = app.add_model(|_| History::new(vec![]));
+        let (tx, rx) = async_channel::bounded(1);
+        let session = Arc::new(Session::new(
+            SessionInfo::new_for_test()
+                .with_id(0)
+                .with_shell_type(ShellType::Zsh),
+            Arc::new(TestCommandExecutor::default()),
+        ));
+        let session_id = session.id();
+        history_handle.update(&mut app, move |history, ctx| {
+            history.init_session_with(
+                session,
+                async move {
+                    pin!(rx).next().await;
+                    vec!["echo hello".to_owned()]
+                },
+                ctx,
+            );
+        });
+        let start_ts = Local::now();
+
+        // The command runs and is expanded before the history file has been read.
+        history_handle.update(&mut app, |history, _| {
+            history.append_commands(
+                session_id,
+                vec![entry_started_at(session_id, "!!", start_ts)],
+            );
+            history.replace_command(session_id, start_ts, "!!", "echo hello".to_owned());
+        });
+
+        tx.send(()).await.unwrap();
+        History::initialized_sessions(&mut history_handle, &mut app, vec![session_id]).await;
+
+        history_handle.read(&app, |history, _| {
+            assert_eq!(
+                visible_commands(history, session_id),
+                vec!["echo hello".to_owned()]
+            );
+        });
+    });
+}

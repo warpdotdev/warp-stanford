@@ -763,6 +763,36 @@ pub fn test_block_emits_block_completed_event_for_in_band_command() {
     assert!(block_completed_event.is_some());
 }
 
+#[test]
+pub fn test_preexec_reports_shell_expanded_command_in_after_block_started_event() {
+    let (events_tx, events_rx) = async_channel::unbounded();
+    let event_proxy = ChannelEventListener::builder_for_test()
+        .with_terminal_events_tx(events_tx)
+        .build();
+    let mut block = TestBlockBuilder::new()
+        .with_event_proxy(event_proxy)
+        .build();
+
+    block.start();
+    block.preexec(PreexecValue {
+        command: "echo hello".to_owned(),
+        session_id: None,
+    });
+
+    events_rx.close();
+    let event = warpui::r#async::block_on(
+        pin!(events_rx).find(|event| matches!(event, Event::AfterBlockStarted { .. })),
+    );
+    let Some(Event::AfterBlockStarted {
+        shell_reported_command,
+        ..
+    }) = event
+    else {
+        panic!("preexec should emit AfterBlockStarted");
+    };
+    assert_eq!(shell_reported_command, "echo hello");
+}
+
 /// Tests the multiline lprompt and multiline command case for selecting text across grids.
 #[test]
 fn test_selection_bounds_all_grids_multiline_lprompt_command() {

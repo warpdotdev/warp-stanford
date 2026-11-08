@@ -925,6 +925,88 @@ impl History {
             }
         }
     }
+
+    /// Returns the command to store in history when the shell expanded what the user typed before
+    /// running it (e.g. `!!`), or `None` if the typed command should be kept.
+    ///
+    /// This is limited to Zsh because Bash's preexec command may be truncated at the first job
+    /// control operator, which would replace a complete command with a partial one.
+    pub fn shell_expanded_command<'a>(
+        typed: &str,
+        shell_reported: &'a str,
+        shell_type: ShellType,
+    ) -> Option<&'a str> {
+        let shell_reported = shell_reported.trim();
+        (shell_type == ShellType::Zsh
+            && typed.contains('!')
+            && !shell_reported.is_empty()
+            && shell_reported != typed.trim())
+        .then_some(shell_reported)
+    }
+
+    /// Replaces the text of the session command that started at `command_start_ts`, provided it
+    /// still matches `original`. Used when the shell ran something other than what was typed.
+    pub fn replace_command(
+        &mut self,
+        session_id: SessionId,
+        command_start_ts: DateTime<Local>,
+        original: &str,
+        replacement: String,
+    ) {
+        let Some(shell_host) = self.session_id_to_shell_host.get(&session_id) else {
+            log::warn!("ShellHost should be populated in the map for all bootstrapped sessions.");
+            return;
+        };
+        let session_commands = match self
+            .read_history_file_state
+            .get_mut(shell_host)
+            .expect("ReadHistoryFileState should exist for session.")
+        {
+            ReadHistoryFileState::InProgress {
+                session_commands_to_append,
+                ..
+            } => session_commands_to_append,
+            ReadHistoryFileState::Done => {
+                let Some(commands) = self.session_commands.get_mut(shell_host) else {
+                    return;
+                };
+                commands
+            }
+        };
+
+        let Some(index) = session_commands.iter().rposition(|entry| {
+            entry.session_id == Some(session_id)
+                && entry.start_ts.is_some_and(|start_ts| {
+                    start_ts.timestamp_millis() == command_start_ts.timestamp_millis()
+                })
+                && entry.command.trim() == original.trim()
+        }) else {
+            return;
+        };
+        Arc::make_mut(&mut session_commands[index]).command = replacement;
+
+        // Hide older entries with the same text, as `append_commands` does. Otherwise `echo hello`
+        // followed by `!!` would be listed twice. While the history file is still loading, these
+        // lists aren't set yet and duplicates are removed once it has been read.
+        let (Some(history_file_commands), Some(session_commands)) = (
+            self.history_file_commands.get(shell_host),
+            self.session_commands.get(shell_host),
+        ) else {
+            return;
+        };
+        let replaced_index = history_file_commands.len() + index;
+        let replaced_command = &session_commands[index].command;
+        let skip_indices = self.session_skip_indices.entry(session_id).or_default();
+        for (idx, entry) in history_file_commands
+            .iter()
+            .chain(session_commands)
+            .enumerate()
+        {
+            if idx != replaced_index && entry.command == *replaced_command {
+                skip_indices.insert(idx);
+            }
+        }
+    }
 }
 
 #[cfg(test)]

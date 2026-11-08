@@ -8270,6 +8270,42 @@ impl TerminalView {
             .and_then(BlockMetadata::session_id)
     }
 
+    /// History records a command when Enter is pressed, before the shell expands it. If the shell
+    /// then reports that it ran something else (e.g. `!!` expanded to the previous command),
+    /// updates the history entry to match.
+    fn record_shell_expanded_command_in_history(
+        &self,
+        block_id: &BlockId,
+        typed: &str,
+        shell_reported: &str,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        // Look up the block by ID: a fast command may have already finished, in which case the
+        // active block is no longer the one that this event is about.
+        let Some((session_id, start_ts)) = self
+            .model
+            .lock()
+            .block_list()
+            .block_with_id(block_id)
+            .and_then(|block| Some((block.session_id()?, block.start_ts().copied()?)))
+        else {
+            return;
+        };
+        let Some(session) = self.sessions.as_ref(ctx).get(session_id) else {
+            return;
+        };
+        let shell_type = session.shell().shell_type();
+        let Some(expanded) =
+            History::shell_expanded_command(typed, shell_reported, shell_type).map(str::to_owned)
+        else {
+            return;
+        };
+
+        History::handle(ctx).update(ctx, |history, _| {
+            history.replace_command(session_id, start_ts, typed, expanded);
+        });
+    }
+
     pub fn active_session_shell_type<C: ModelAsRef>(&self, ctx: &C) -> Option<ShellType> {
         self.active_block_session_id()
             .and_then(|id| self.sessions.as_ref(ctx).get(id))
@@ -12707,6 +12743,7 @@ impl TerminalView {
             }
             ModelEvent::AfterBlockStarted {
                 command,
+                shell_reported_command,
                 is_for_in_band_command,
                 block_id,
                 ..
@@ -12724,6 +12761,12 @@ impl TerminalView {
                     return;
                 }
                 self.did_notify_long_running = false;
+                self.record_shell_expanded_command_in_history(
+                    block_id,
+                    command,
+                    shell_reported_command,
+                    ctx,
+                );
 
                 // Snapshot the prompt state as of when the command began executing.
                 // Commands may themselves affect the prompt (if running `git checkout`), for
