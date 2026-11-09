@@ -48,6 +48,9 @@ use crate::cloud_object::model::view::CloudViewModel;
 use crate::context_chips::prompt::Prompt;
 use crate::editor::Event;
 use crate::gpu_state::GPUState;
+use crate::launch_configs::launch_config::{
+    PaneMode, PaneTemplateType, TabGroupTemplate, TabTemplate,
+};
 use crate::menu::MenuAction;
 use crate::network::NetworkStatus;
 use crate::notebooks::editor::keys::NotebookKeybindings;
@@ -5267,6 +5270,97 @@ fn test_new_tab_in_group_expands_collapsed_group_member_active() {
             assert!(
                 !workspace.tab_groups[&group_id].collapsed,
                 "group should expand when a new tab is opened in it"
+            );
+        });
+    });
+}
+
+fn launch_config_tab(group: Option<usize>) -> TabTemplate {
+    TabTemplate {
+        title: None,
+        layout: PaneTemplateType::PaneTemplate {
+            cwd: std::env::temp_dir(),
+            commands: vec![],
+            is_focused: Some(true),
+            pane_mode: PaneMode::Terminal,
+            shell: None,
+        },
+        commands: vec![],
+        color: None,
+        group,
+    }
+}
+
+#[test]
+fn test_launch_config_keeps_tab_group_collapsed() {
+    let _grouped_tabs_guard = FeatureFlag::GroupedTabs.override_enabled(true);
+
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+
+        let workspace = mock_workspace(&mut app);
+        workspace.update(&mut app, |workspace, ctx| {
+            let window = WindowTemplate {
+                active_tab_index: Some(0),
+                tabs: vec![launch_config_tab(Some(0)), launch_config_tab(Some(0))],
+                tab_groups: vec![TabGroupTemplate {
+                    name: Some("Collapsed group".to_string()),
+                    color: None,
+                    collapsed: true,
+                    pinned: false,
+                }],
+            };
+            workspace.open_launch_config_window(window, ctx);
+
+            let group_id = workspace
+                .tabs
+                .iter()
+                .find_map(|tab| tab.group_id)
+                .expect("launch config should create the group");
+            assert_eq!(
+                workspace
+                    .tabs
+                    .iter()
+                    .filter(|tab| tab.group_id == Some(group_id))
+                    .count(),
+                2
+            );
+            assert!(
+                workspace.tab_groups[&group_id].collapsed,
+                "group saved as collapsed should open collapsed"
+            );
+        });
+    });
+}
+
+#[test]
+fn test_launch_config_keeps_active_collapsed_group_collapsed() {
+    let _grouped_tabs_guard = FeatureFlag::GroupedTabs.override_enabled(true);
+
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+
+        let workspace = mock_workspace(&mut app);
+        workspace.update(&mut app, |workspace, ctx| {
+            workspace.handle_action(
+                &WorkspaceAction::SelectNewSessionMenuItem(NewSessionMenuItem::CreateNewTabGroup),
+                ctx,
+            );
+            let group_id = workspace.tabs[workspace.active_tab_index()]
+                .group_id
+                .expect("active tab should be in a group");
+            workspace.handle_action(&WorkspaceAction::ToggleTabGroupCollapsed(group_id), ctx);
+
+            let window = WindowTemplate {
+                active_tab_index: Some(0),
+                tabs: vec![launch_config_tab(None)],
+                tab_groups: vec![],
+            };
+            workspace.open_launch_config_window(window, ctx);
+
+            assert!(
+                workspace.tab_groups[&group_id].collapsed,
+                "opening a launch config should not expand an existing group"
             );
         });
     });
