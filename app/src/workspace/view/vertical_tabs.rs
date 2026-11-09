@@ -7218,9 +7218,10 @@ pub(super) fn render_detail_sidecar(
     side: super::PanelPosition,
     app: &AppContext,
 ) -> Option<DetailSidecarOverlay> {
-    if !*TabSettings::as_ref(app)
-        .vertical_tabs_show_details_on_hover
-        .value()
+    if state.show_settings_popup
+        || !*TabSettings::as_ref(app)
+            .vertical_tabs_show_details_on_hover
+            .value()
     {
         state.clear_detail_sidecar();
         return None;

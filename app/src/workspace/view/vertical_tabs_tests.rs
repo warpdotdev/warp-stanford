@@ -4,9 +4,11 @@ use std::path::PathBuf;
 
 use pathfinder_geometry::rect::RectF;
 use pathfinder_geometry::vector::Vector2F;
-use warpui::EntityId;
+use settings::Setting;
 use warpui::elements::PositionedElementOffsetBounds;
+use warpui::{App, EntityId, SingletonEntity};
 
+use super::super::tests::{initialize_app, mock_workspace};
 use super::{
     AgentTabTextPreference, SummaryPaneKind, SummaryPaneKindIcons, TerminalAgentText,
     TerminalPrimaryLineData, TerminalPrimaryLineFont, VerticalTabsDetailTarget,
@@ -16,7 +18,7 @@ use super::{
     detail_target_for_hovered_row, group_display_name, group_name_highlight_indices,
     matched_group_ids, merge_group_name_matches, non_terminal_search_text_fragments,
     pane_ids_for_display_granularity, pane_search_text_fragments, preferred_agent_tab_titles,
-    push_normalized_unique_summary_label, search_fragments_contain_query,
+    push_normalized_unique_summary_label, render_detail_sidecar, search_fragments_contain_query,
     select_summary_pane_kind_icons, should_keep_detail_sidecar_visible_for_mouse_position,
     should_show_tab_group_header, shows_synced_inputs_indicator,
     sort_summary_primary_labels_status_first, summary_overflow_count,
@@ -33,7 +35,8 @@ use crate::safe_triangle::SafeTriangle;
 use crate::tab::{ShortcutModifierKind, reveals_shortcut_hints};
 use crate::terminal::CLIAgent;
 use crate::workspace::tab_group::{TabGroup, TabGroupId};
-use crate::workspace::tab_settings::VerticalTabsDisplayGranularity;
+use crate::workspace::tab_settings::{TabSettings, VerticalTabsDisplayGranularity};
+use crate::workspace::view::PanelPosition;
 
 fn label(text: &str) -> VerticalTabsSummaryPrimaryLabel {
     VerticalTabsSummaryPrimaryLabel {
@@ -554,6 +557,83 @@ fn tabs_granularity_returns_empty_for_empty_visible_panes() {
         pane_ids_for_display_granularity(&[], pane_id(), VerticalTabsDisplayGranularity::Tabs,),
         Vec::<PaneId>::new()
     );
+}
+
+#[test]
+fn settings_popup_clears_detail_sidecar_until_next_hover() {
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        app.update(|ctx| {
+            TabSettings::handle(ctx).update(ctx, |settings, ctx| {
+                settings
+                    .vertical_tabs_show_details_on_hover
+                    .set_value(true, ctx)
+                    .unwrap();
+            });
+        });
+        let workspace = mock_workspace(&mut app);
+        workspace.update(&mut app, |workspace, ctx| {
+            let pane_group = &workspace.tabs[0].pane_group;
+            let target = VerticalTabsDetailTarget::Pane {
+                pane_group_id: pane_group.id(),
+                pane_id: pane_group.as_ref(ctx).focused_pane_id(ctx),
+            };
+            workspace
+                .vertical_tabs_panel
+                .detail_overlay_state
+                .lock()
+                .unwrap()
+                .active_target = Some(target);
+            assert!(
+                render_detail_sidecar(
+                    &workspace.vertical_tabs_panel,
+                    workspace,
+                    PanelPosition::Left,
+                    ctx
+                )
+                .is_some()
+            );
+
+            workspace.vertical_tabs_panel.show_settings_popup = true;
+            assert!(
+                render_detail_sidecar(
+                    &workspace.vertical_tabs_panel,
+                    workspace,
+                    PanelPosition::Left,
+                    ctx
+                )
+                .is_none()
+            );
+            assert!(!workspace.vertical_tabs_panel.has_active_detail_target());
+
+            workspace.vertical_tabs_panel.show_settings_popup = false;
+            assert!(
+                render_detail_sidecar(
+                    &workspace.vertical_tabs_panel,
+                    workspace,
+                    PanelPosition::Left,
+                    ctx
+                )
+                .is_none()
+            );
+
+            workspace
+                .vertical_tabs_panel
+                .detail_overlay_state
+                .lock()
+                .unwrap()
+                .active_target = Some(target);
+            assert!(
+                render_detail_sidecar(
+                    &workspace.vertical_tabs_panel,
+                    workspace,
+                    PanelPosition::Left,
+                    ctx
+                )
+                .is_some()
+            );
+        });
+    });
 }
 
 #[test]
