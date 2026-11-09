@@ -1593,6 +1593,16 @@ impl CurrentPrompt {
             .and_then(|h| h.as_ref(ctx).metadata(ctx).cloned());
 
         let Some(metadata) = metadata else {
+            // The model has no metadata, e.g. because `.git` was removed while
+            // this prompt is still subscribed. These chips skip their shell
+            // fallback while subscribed, so clear them instead of keeping stale
+            // values. `ShellGitBranch` still gets its precmd value from the shell.
+            for chip_kind in [
+                ContextChipKind::GitDiffStats,
+                ContextChipKind::GitBranchStatus,
+            ] {
+                self.update_chip_value(&chip_kind, None);
+            }
             return;
         };
 

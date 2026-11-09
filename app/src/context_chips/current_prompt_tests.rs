@@ -961,6 +961,107 @@ fn test_git_status_change_updates_branch_status_chip_value() {
 
 #[cfg(feature = "local_fs")]
 #[test]
+fn test_git_status_metadata_loss_clears_git_chips() {
+    App::test((), |mut app| async move {
+        app.add_singleton_model(|_| {
+            Prompt::mock_with(
+                [
+                    ContextChipKind::GitBranchStatus,
+                    ContextChipKind::GitDiffStats,
+                ],
+                false,
+                WarpPromptSeparator::None,
+            )
+        });
+        app.add_singleton_model(SessionSettings::new_with_defaults);
+        app.add_singleton_model(|_ctx| {
+            settings::PublicPreferences::new(
+                Box::<user_preferences::in_memory::InMemoryPreferences>::default(),
+            )
+        });
+        app.add_singleton_model(|_| {
+            settings::PrivatePreferences::new(
+                Box::<user_preferences::in_memory::InMemoryPreferences>::default(),
+            )
+        });
+
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let watcher_handle = app.add_singleton_model(DirectoryWatcher::new_for_testing);
+        let repo_handle = watcher_handle.update(&mut app, |watcher, ctx| {
+            watcher
+                .add_directory(
+                    warp_util::standardized_path::StandardizedPath::from_local_canonicalized(
+                        temp_dir.path(),
+                    )
+                    .unwrap(),
+                    ctx,
+                )
+                .unwrap()
+        });
+
+        let git_status = app
+            .add_model(move |ctx| GitRepoStatusModel::new_local_for_test(repo_handle, None, ctx));
+        let sessions = app.add_model(|_| Sessions::new_for_test());
+        let current_prompt = app.add_model(move |ctx| CurrentPrompt::new(sessions, ctx));
+
+        current_prompt.update(&mut app, |cp, ctx| {
+            cp.set_git_repo_status(Some(git_status.downgrade()), ctx);
+            cp.update_states_with_new_context(ctx);
+        });
+
+        let metadata_with_changes = GitStatusMetadata {
+            stats_against_head: DiffStats {
+                files_changed: 1,
+                total_additions: 1,
+                total_deletions: 0,
+            },
+            ..git_status_metadata("main")
+        };
+        let has_git_chips = |app: &App| {
+            app.read(|ctx| {
+                let cp = current_prompt.as_ref(ctx);
+                (
+                    cp.latest_chip_value(&ContextChipKind::GitBranchStatus)
+                        .is_some(),
+                    cp.latest_chip_value(&ContextChipKind::GitDiffStats)
+                        .is_some(),
+                )
+            })
+        };
+
+        git_status.update(&mut app, |model, ctx| {
+            model.set_metadata_for_test(Some(metadata_with_changes.clone()), ctx);
+        });
+        assert_eq!(
+            has_git_chips(&app),
+            (true, true),
+            "Git chips should be populated from metadata"
+        );
+
+        // The model loses its metadata, e.g. after `.git` is removed.
+        git_status.update(&mut app, |model, ctx| {
+            model.set_metadata_for_test(None, ctx);
+        });
+        assert_eq!(
+            has_git_chips(&app),
+            (false, false),
+            "Git chips should be cleared when the metadata goes away"
+        );
+
+        // The repository comes back, e.g. after `git init`.
+        git_status.update(&mut app, |model, ctx| {
+            model.set_metadata_for_test(Some(metadata_with_changes), ctx);
+        });
+        assert_eq!(
+            has_git_chips(&app),
+            (true, true),
+            "Git chips should be repopulated when metadata returns"
+        );
+    });
+}
+
+#[cfg(feature = "local_fs")]
+#[test]
 fn test_git_status_pr_info_updates_github_pr_chip_value() {
     let _flag_guard = FeatureFlag::GithubPrPromptChip.override_enabled(true);
     App::test((), |mut app| async move {
