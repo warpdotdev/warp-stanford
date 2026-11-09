@@ -42,11 +42,18 @@ impl UiComponent for Checkbox {
         let hoverable = Hoverable::new(self.hover_state.clone(), |state| {
             let checkbox = self.render_checkbox(state);
             if let Some(label) = self.label.clone() {
+                let mut label = label.with_default_style(self.default_styles);
+                if self.disabled
+                    && let Some(styles) = self.disabled_styles
+                {
+                    label = label.with_style(styles);
+                }
+
                 Flex::row()
                     .with_cross_axis_alignment(crate::elements::CrossAxisAlignment::Center)
                     .with_child(checkbox)
                     .with_child(
-                        Container::new(label.with_style(self.styles(state)).build().finish())
+                        Container::new(label.build().finish())
                             .with_margin_left(LABEL_LEFT_MARGIN)
                             .finish(),
                     )
