@@ -4011,6 +4011,14 @@ impl Workspace {
             .get(self.active_tab_index)
             .and_then(|tab| tab.group_id);
 
+        // A tab that joins a group in the loop below expands it, so re-collapse these afterwards.
+        let collapsed_groups: Vec<TabGroupId> = self
+            .tab_groups
+            .iter()
+            .filter(|(_, group)| group.collapsed)
+            .map(|(id, _)| *id)
+            .collect();
+
         window
             .tabs
             .iter()
@@ -4033,6 +4041,12 @@ impl Workspace {
                 self.tabs[index].group_id = memberships[tab_index]
                     .and_then(|group_index| group_ids.get(group_index).copied().flatten());
             });
+
+        for group_id in &collapsed_groups {
+            if let Some(group) = self.tab_groups.get_mut(group_id) {
+                group.collapsed = true;
+            }
+        }
 
         // A pinned group makes its members effectively pinned, and the pinned
         // region is a prefix of the tab list. The inserts above ran while the
