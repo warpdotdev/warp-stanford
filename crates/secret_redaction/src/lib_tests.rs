@@ -1,3 +1,5 @@
+use std::ops::Range;
+
 use regex::Regex;
 
 use super::*;
@@ -153,4 +155,108 @@ fn test_jwt() {
     assert_regex_match_not_found(regexes::JWT, missing_signature);
     assert_regex_match_not_found(regexes::JWT, missing_periods);
     assert_regex_match_not_found(regexes::JWT, not_a_jwt);
+}
+
+fn secrets_regex(enterprise: &[&str], user: &[&str]) -> SecretsRegex {
+    let patterns = enterprise.iter().chain(user).copied().collect_vec();
+    SecretsRegex {
+        regex: regex_automata::meta::Regex::new_many(&patterns).expect("test regex should compile"),
+        dfas: RegexDFAs::new_many(&patterns, false, true).expect("test DFA should compile"),
+        level_metadata: RegexLevelMetadata {
+            enterprise_count: enterprise.len(),
+            user_count: user.len(),
+        },
+    }
+}
+
+fn string_range(char_range: Range<usize>, byte_range: Range<usize>) -> StringRange {
+    StringRange {
+        char_range,
+        byte_range,
+    }
+}
+
+#[test]
+fn test_levels_follow_pattern_source() {
+    let secrets_regex = secrets_regex(&["corp-[0-9]+"], &["mine-[0-9]+"]);
+    let found = find_secrets_in_text_with_levels_using_regex("corp-1 mine-2", &secrets_regex);
+    assert_eq!(
+        found,
+        vec![
+            (string_range(0..6, 0..6), SecretLevel::Enterprise),
+            (string_range(7..13, 7..13), SecretLevel::User),
+        ]
+    );
+}
+
+#[test]
+fn test_levels_without_enterprise_patterns() {
+    let secrets_regex = secrets_regex(&[], &["mine-[0-9]+"]);
+    let found = find_secrets_in_text_with_levels_using_regex("a mine-1 b mine-2", &secrets_regex);
+    assert_eq!(
+        found,
+        vec![
+            (string_range(2..8, 2..8), SecretLevel::User),
+            (string_range(11..17, 11..17), SecretLevel::User),
+        ]
+    );
+}
+
+#[test]
+fn test_ranges_in_multibyte_text() {
+    let secrets_regex = secrets_regex(&["secret"], &[]);
+    // "é" is 2 bytes and "猫" is 3 bytes, so byte and char offsets diverge.
+    let found = find_secrets_in_text_with_levels_using_regex("é 猫 secret", &secrets_regex);
+    assert_eq!(
+        found,
+        vec![(string_range(4..10, 7..13), SecretLevel::Enterprise)]
+    );
+}
+
+#[test]
+fn test_merge_overlapping_keeps_enterprise_in_either_order() {
+    let user_first = vec![
+        (string_range(0..5, 0..5), SecretLevel::User),
+        (string_range(3..8, 3..8), SecretLevel::Enterprise),
+    ];
+    let enterprise_first = vec![
+        (string_range(0..5, 0..5), SecretLevel::Enterprise),
+        (string_range(3..8, 3..8), SecretLevel::User),
+    ];
+    let expected = vec![(string_range(0..8, 0..8), SecretLevel::Enterprise)];
+    assert_eq!(merge_sorted_ranges_with_levels(user_first), expected);
+    assert_eq!(merge_sorted_ranges_with_levels(enterprise_first), expected);
+}
+
+#[test]
+fn test_merge_touching_and_chained_ranges() {
+    let touching = vec![
+        (string_range(0..3, 0..3), SecretLevel::User),
+        (string_range(3..6, 3..6), SecretLevel::User),
+    ];
+    assert_eq!(
+        merge_sorted_ranges_with_levels(touching),
+        vec![(string_range(0..6, 0..6), SecretLevel::User)]
+    );
+
+    // Byte offsets differ from char offsets to check both are extended.
+    let chained = vec![
+        (string_range(0..4, 0..6), SecretLevel::User),
+        (string_range(2..7, 3..10), SecretLevel::User),
+        (string_range(6..9, 9..12), SecretLevel::User),
+    ];
+    assert_eq!(
+        merge_sorted_ranges_with_levels(chained),
+        vec![(string_range(0..9, 0..12), SecretLevel::User)]
+    );
+}
+
+#[test]
+fn test_merge_disjoint_and_empty_ranges() {
+    let disjoint = vec![
+        (string_range(0..3, 0..3), SecretLevel::Enterprise),
+        (string_range(5..8, 5..8), SecretLevel::User),
+    ];
+    assert_eq!(merge_sorted_ranges_with_levels(disjoint.clone()), disjoint);
+    assert!(merge_sorted_ranges_with_levels(vec![]).is_empty());
 }
