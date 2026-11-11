@@ -3863,6 +3863,43 @@ fn combined_completions_show_file_paths_after_empty_native_results() {
 }
 
 #[test]
+fn completion_acceptance_preserves_non_ascii_characters() {
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        let terminal =
+            add_window_with_bootstrapped_terminal(&mut app, None, None /* session_info */).await;
+        let input = terminal.read(&app, |terminal, _| terminal.input().clone());
+
+        // "café" sits left of the completed token, so the byte span (9..13) starts after multi-byte
+        // characters; "Mäsärästï" is non-ASCII inside the token. "cd café Mäs" is 13 bytes long.
+        input.update(&mut app, |input, ctx| {
+            input.clear_buffer_and_reset_undo_stack(ctx);
+            input.user_insert("cd café Mäs", ctx);
+        });
+        input.update(&mut app, |input, ctx| {
+            input.input_tab(ctx);
+            input.handle_completion_suggestions_results(
+                build_suggestion_results(
+                    vec![argument_suggestion("Mäsärästï")],
+                    (9, 13),
+                    MatchStrategy::CaseInsensitive,
+                ),
+                CompletionsTrigger::Keybinding,
+                editor_model_snapshot(input, ctx),
+                ctx,
+            );
+        });
+        input.read(&app, |input, ctx| {
+            assert_eq!(
+                input.buffer_text(ctx),
+                "cd café Mäsärästï ",
+                "accepting a non-ASCII completion must not mangle any character"
+            );
+        });
+    });
+}
+
+#[test]
 fn combined_completions_preserve_nonempty_native_results() {
     let _native_completions_flag = FeatureFlag::NativeShellCompletions.override_enabled(true);
 
@@ -4058,6 +4095,91 @@ fn native_shell_replacement_span_falls_back_to_the_whitespace_token_when_none_is
     let results = native_shell_suggestion_results(Vec::new(), None, buffer_text, buffer_text.len());
 
     assert_eq!(results.replacement_span, Span::new(3, 8));
+}
+
+#[test]
+fn native_shell_replacement_span_is_floored_to_char_boundaries() {
+    // "cd café Mäs" contains multi-byte characters: 'é' occupies bytes 6..8 and 'ä' bytes 10..12,
+    // so an end of 11 lands mid-character and would panic if used to slice the buffer.
+    let buffer_text = "cd café Mäs";
+
+    let results = native_shell_suggestion_results(
+        Vec::new(),
+        Some(Span::new(9, 11)),
+        buffer_text,
+        buffer_text.len(),
+    );
+
+    assert_eq!(results.replacement_span, Span::new(9, 10));
+}
+
+#[test]
+fn accepting_a_native_completion_preserves_non_ascii_characters() {
+    let _native_completions_flag = FeatureFlag::NativeShellCompletions.override_enabled(true);
+
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        app.update(|ctx| {
+            InputSettings::handle(ctx).update(ctx, |settings, ctx| {
+                settings
+                    .warp_completions_enabled
+                    .set_value(true, ctx)
+                    .expect("Warp completions setting must update");
+                settings
+                    .native_shell_completions_enabled
+                    .set_value(true, ctx)
+                    .expect("native completions setting must update");
+            });
+        });
+
+        let session_info = SessionInfo::new_for_test();
+        let session_id = session_info.session_id;
+        let terminal =
+            add_window_with_bootstrapped_terminal(&mut app, None, Some(session_info)).await;
+        simulate_directory_for_completion(session_id, &terminal, &mut app, "/usr/bin");
+
+        // Mimic a shell reply for "cd Mäs": the candidate is a non-ASCII path and the span is the
+        // byte range (3..7) of the token the shell reports, as the pwsh bootstrap emits.
+        app.update(|ctx| {
+            ctx.subscribe_to_view(&terminal, move |_, event: &TerminalViewEvent, _| {
+                if let TerminalViewEvent::RunNativeShellCompletions { results_tx, .. } = event {
+                    results_tx
+                        .try_send((
+                            vec![ShellCompletion::new("Mäsärästü".to_string())],
+                            Some(Span::new(3, 7)),
+                        ))
+                        .expect("native completion response receiver must remain open");
+                }
+            });
+        });
+        let input = terminal.read(&app, |terminal, _| terminal.input().clone());
+
+        input.update(&mut app, |input, ctx| {
+            input.clear_buffer_and_reset_undo_stack(ctx);
+            input.user_insert("cd Mäs", ctx);
+            input.input_tab(ctx);
+        });
+
+        assert_eventually!(
+            600 => input.read(&app, |input, _| {
+                input.input_suggestions.read(&app, |suggestions, _| {
+                    suggestions.items().iter().any(|item| item.text() == "Mäsärästü")
+                })
+            }),
+            "gave up waiting for the non-ASCII native suggestion"
+        );
+
+        input.update(&mut app, |input, ctx| {
+            input.confirm_suggestion("Mäsärästü", ctx);
+        });
+        input.read(&app, |input, ctx| {
+            assert_eq!(
+                input.buffer_text(ctx),
+                "cd Mäsärästü ",
+                "accepting a non-ASCII completion must insert it verbatim"
+            );
+        });
+    });
 }
 
 #[test]

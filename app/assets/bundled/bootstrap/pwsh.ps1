@@ -17,6 +17,28 @@ $null = New-Module -Name Warp-Module -ScriptBlock {
     # Byte used to signal the end of an OSC for Warp JSON messages.
     $oscEnd = "$([char]0x07)"
 
+    # Warp communicates with the shell over a ConPTY channel, which is always UTF-8, but the console
+    # session decodes the bytes we write into it using the console input code page -- which Windows
+    # PowerShell 5.1 defaults to the system's legacy OEM/ANSI code page (e.g. 857 on Turkish
+    # Windows), not UTF-8. Non-ASCII characters in a command written to the PTY (e.g. a path with
+    # Turkish characters accepted from autocomplete) then arrive mangled and the path no longer
+    # resolves. Windows PowerShell 5.1's $OutputEncoding also defaults to strict ASCII, turning any
+    # non-ASCII character into a literal '?' when piping to a native program. Pin all three to
+    # BOM-less UTF-8 so non-ASCII text round-trips; a BOM-less encoding instance additionally avoids
+    # 5.1 prepending a UTF-8 BOM to native stdin once the input code page is 65001. PowerShell 7 and
+    # non-Windows hosts already default to UTF-8, and $IsWindows doesn't exist on 5.1, hence the
+    # version check. Some hosts disallow changing the encodings, hence the catch.
+    if (($PSVersionTable.PSVersion.Major -le 5) -or $IsWindows) {
+        try {
+            $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
+            $global:OutputEncoding = $utf8NoBom
+            [Console]::InputEncoding = $utf8NoBom
+            [Console]::OutputEncoding = $utf8NoBom
+        } catch {
+            Write-Verbose "Unable to pin console encodings to UTF-8: $($_.Exception.Message)"
+        }
+    }
+
     # Writes a hex-encoded JSON message to the PTY.
     function Warp-Send-JsonMessage([System.Collections.Hashtable]$table) {
         $json = ConvertTo-Json -InputObject $table -Compress
