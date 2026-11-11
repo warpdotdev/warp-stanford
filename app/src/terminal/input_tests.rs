@@ -4138,15 +4138,20 @@ fn accepting_a_native_completion_preserves_non_ascii_characters() {
             add_window_with_bootstrapped_terminal(&mut app, None, Some(session_info)).await;
         simulate_directory_for_completion(session_id, &terminal, &mut app, "/usr/bin");
 
-        // Mimic a shell reply for "cd Mäs": the candidate is a non-ASCII path and the span is the
-        // byte range (3..7) of the token the shell reports, as the pwsh bootstrap emits.
+        // Mimic a shell reply for "warptool Mäs": the candidates are non-ASCII paths and the span
+        // is the byte range (9..13) of the token the shell reports, as the pwsh bootstrap emits.
+        // Two candidates sharing only the short prefix "Mäs" keeps the menu open (rather than
+        // auto-inserting a single match or the common prefix), so acceptance can be exercised.
         app.update(|ctx| {
             ctx.subscribe_to_view(&terminal, move |_, event: &TerminalViewEvent, _| {
                 if let TerminalViewEvent::RunNativeShellCompletions { results_tx, .. } = event {
                     results_tx
                         .try_send((
-                            vec![ShellCompletion::new("Mäsärästü".to_string())],
-                            Some(Span::new(3, 7)),
+                            vec![
+                                ShellCompletion::new("Mäsärästü".to_string()),
+                                ShellCompletion::new("Mäsótïlo".to_string()),
+                            ],
+                            Some(Span::new(9, 13)),
                         ))
                         .expect("native completion response receiver must remain open");
                 }
@@ -4156,17 +4161,18 @@ fn accepting_a_native_completion_preserves_non_ascii_characters() {
 
         input.update(&mut app, |input, ctx| {
             input.clear_buffer_and_reset_undo_stack(ctx);
-            input.user_insert("cd Mäs", ctx);
+            input.user_insert("warptool Mäs", ctx);
             input.input_tab(ctx);
         });
 
         assert_eventually!(
             600 => input.read(&app, |input, _| {
                 input.input_suggestions.read(&app, |suggestions, _| {
-                    suggestions.items().iter().any(|item| item.text() == "Mäsärästü")
+                    let items = suggestions.items().iter().map(|item| item.text()).collect_vec();
+                    items.contains(&"Mäsärästü") && items.contains(&"Mäsótïlo")
                 })
             }),
-            "gave up waiting for the non-ASCII native suggestion"
+            "gave up waiting for the non-ASCII native suggestions"
         );
 
         input.update(&mut app, |input, ctx| {
@@ -4175,7 +4181,7 @@ fn accepting_a_native_completion_preserves_non_ascii_characters() {
         input.read(&app, |input, ctx| {
             assert_eq!(
                 input.buffer_text(ctx),
-                "cd Mäsärästü ",
+                "warptool Mäsärästü ",
                 "accepting a non-ASCII completion must insert it verbatim"
             );
         });
