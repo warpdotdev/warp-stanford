@@ -87,7 +87,11 @@ fn convert_capture_name_to_color(name: &str, color_map: &ColorMap) -> Option<Col
         _ => {}
     }
     match name.split('.').next() {
-        Some("keyword") => Some(color_map.keyword_color),
+        // Some bundled grammars (e.g. Lua, Kotlin, Scala) still use these legacy capture names for
+        // keywords instead of `keyword.*`.
+        Some("keyword" | "conditional" | "repeat" | "exception" | "include") => {
+            Some(color_map.keyword_color)
+        }
         Some("function") => Some(color_map.function_color),
         Some("string") => Some(color_map.string_color),
         Some("type") => Some(color_map.type_color),
@@ -138,3 +142,7 @@ impl<'a> TextProvider<&'a [u8]> for TextBuffer<'a> {
         )
     }
 }
+
+#[cfg(test)]
+#[path = "highlight_query_tests.rs"]
+mod tests;
