@@ -652,7 +652,7 @@ impl Buffer {
                                 push_text_fragments_to_block(
                                     &mut new_content,
                                     line,
-                                    previous_block_style.clone(),
+                                    &mut previous_block_type,
                                 );
                             } else {
                                 end_all_active_text_styles(&mut new_content);
@@ -667,7 +667,11 @@ impl Buffer {
                                 }
 
                                 previous_block_type = BlockType::Text(block_style);
-                                update_content_with_text_fragments(&mut new_content, line);
+                                update_content_with_text_fragments(
+                                    &mut new_content,
+                                    line,
+                                    &mut previous_block_type,
+                                );
                             }
                         }
                     }
@@ -723,7 +727,7 @@ impl Buffer {
                                 push_text_fragments_to_block(
                                     &mut new_content,
                                     text.text,
-                                    previous_block_style,
+                                    &mut previous_block_type,
                                 );
                             } else {
                                 maybe_push_new_block_marker(
@@ -735,7 +739,11 @@ impl Buffer {
                                 );
 
                                 previous_block_type = BlockType::Text(block_style);
-                                update_content_with_text_fragments(&mut new_content, text.text);
+                                update_content_with_text_fragments(
+                                    &mut new_content,
+                                    text.text,
+                                    &mut previous_block_type,
+                                );
                             }
                         }
                     }
@@ -762,7 +770,7 @@ impl Buffer {
                                 push_text_fragments_to_block(
                                     &mut new_content,
                                     list.text,
-                                    previous_block_style,
+                                    &mut previous_block_type,
                                 );
                             } else {
                                 maybe_push_new_block_marker(
@@ -774,7 +782,11 @@ impl Buffer {
                                 );
 
                                 previous_block_type = BlockType::Text(block_style);
-                                update_content_with_text_fragments(&mut new_content, list.text);
+                                update_content_with_text_fragments(
+                                    &mut new_content,
+                                    list.text,
+                                    &mut previous_block_type,
+                                );
                             }
                         }
                     }
@@ -802,7 +814,7 @@ impl Buffer {
                                 push_text_fragments_to_block(
                                     &mut new_content,
                                     list.indented_text.text,
-                                    previous_block_style.clone(),
+                                    &mut previous_block_type,
                                 );
                             } else {
                                 maybe_push_new_block_marker(
@@ -819,6 +831,7 @@ impl Buffer {
                                 update_content_with_text_fragments(
                                     &mut new_content,
                                     list.indented_text.text,
+                                    &mut previous_block_type,
                                 );
                             }
                         }
@@ -847,7 +860,7 @@ impl Buffer {
                                 push_text_fragments_to_block(
                                     &mut new_content,
                                     list.text,
-                                    previous_block_style.clone(),
+                                    &mut previous_block_type,
                                 );
                             } else {
                                 maybe_push_new_block_marker(
@@ -861,7 +874,11 @@ impl Buffer {
                                 previous_block_type = BlockType::Text(block_style);
                                 // When parsing formatted text, we ignore the given numbers. Instead, numbering
                                 // is automatically calculated at render-time based on the content structure.
-                                update_content_with_text_fragments(&mut new_content, list.text);
+                                update_content_with_text_fragments(
+                                    &mut new_content,
+                                    list.text,
+                                    &mut previous_block_type,
+                                );
                             }
                         }
                     }
@@ -1395,13 +1412,13 @@ impl Buffer {
 fn push_text_fragments_to_block(
     content_tree: &mut SumTree<BufferText>,
     fragments: Vec<FormattedTextFragment>,
-    previous_block_style: BufferBlockStyle,
+    previous_block_type: &mut BlockType,
 ) {
-    match previous_block_style {
-        BufferBlockStyle::CodeBlock { .. } => {
+    match previous_block_type {
+        BlockType::Text(BufferBlockStyle::CodeBlock { .. }) => {
             push_text_fragments_ignoring_styling(content_tree, fragments);
         }
-        _ => update_content_with_text_fragments(content_tree, fragments),
+        _ => update_content_with_text_fragments(content_tree, fragments, previous_block_type),
     }
 }
 
@@ -1493,11 +1510,7 @@ fn insert_multiline_block(
                             }
                         }
                         let fragments = vec![FormattedTextFragment::plain_text(line.to_string())];
-                        push_text_fragments_to_block(
-                            new_content,
-                            fragments,
-                            previous_block_style.clone(),
-                        );
+                        push_text_fragments_to_block(new_content, fragments, previous_block_type);
                         first = false;
                     }
                 }
@@ -1588,7 +1601,7 @@ fn update_content_after_block_item(
     *previous_block_type = active_block_type;
 
     if let Some(fragments) = fragments {
-        update_content_with_text_fragments(content_tree, fragments);
+        update_content_with_text_fragments(content_tree, fragments, previous_block_type);
     }
 }
 
@@ -1597,6 +1610,7 @@ fn update_content_after_block_item(
 fn update_content_with_text_fragments(
     content_tree: &mut SumTree<BufferText>,
     fragments: Vec<FormattedTextFragment>,
+    previous_block_type: &mut BlockType,
 ) {
     for fragment in fragments {
         let style = content_tree.extent::<StyleSummary>();
@@ -1630,7 +1644,25 @@ fn update_content_with_text_fragments(
         }
 
         transition_styles_with_metadata(&active_text_style, &text_style, content_tree);
-        content_tree.append_str(&content);
+        for line in content.split_inclusive('\n') {
+            if let Some(line) = line.strip_suffix('\n') {
+                content_tree.append_str(line.strip_suffix('\r').unwrap_or(line));
+                let BlockType::Text(block_style) = previous_block_type else {
+                    unreachable!("text fragments require a text block");
+                };
+                match block_style.line_break_behavior() {
+                    BlockLineBreakBehavior::NewLine => content_tree.push(BufferText::Newline),
+                    BlockLineBreakBehavior::BlockMarker(marker_type) => {
+                        content_tree.push(BufferText::BlockMarker {
+                            marker_type: marker_type.clone(),
+                        });
+                        *previous_block_type = BlockType::Text(marker_type);
+                    }
+                }
+            } else {
+                content_tree.append_str(line);
+            }
+        }
     }
 }
 

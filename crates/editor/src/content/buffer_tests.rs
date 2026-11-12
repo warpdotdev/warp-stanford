@@ -14384,6 +14384,50 @@ fn test_from_plain_text() {
 }
 
 #[test]
+fn plain_text_normalizes_crlf_and_mixed_line_endings() {
+    App::test((), |mut app| async move {
+        let buffer = app.add_model(|_| Buffer::default());
+        let selection = app.add_model(|_| BufferSelectionModel::new(buffer.clone()));
+
+        buffer.update(&mut app, |buffer, ctx| {
+            buffer.update_content(
+                BufferEditAction::ReplaceWith(InitialBufferState::plain_text(
+                    "One\r\nTwo\n\r\nThree\r\n",
+                )),
+                EditOrigin::SystemEdit,
+                selection,
+                ctx,
+            );
+
+            assert_eq!(buffer.text().as_str(), "One\nTwo\n\nThree\n");
+            assert_eq!(
+                buffer.text_with_line_ending_mode(LineEnding::CRLF).as_str(),
+                "One\r\nTwo\r\n\r\nThree\r\n"
+            );
+        });
+    });
+}
+
+#[test]
+fn plain_text_preserves_bare_carriage_returns() {
+    App::test((), |mut app| async move {
+        let buffer = app.add_model(|_| Buffer::default());
+        let selection = app.add_model(|_| BufferSelectionModel::new(buffer.clone()));
+
+        buffer.update(&mut app, |buffer, ctx| {
+            buffer.update_content(
+                BufferEditAction::ReplaceWith(InitialBufferState::plain_text("One\rTwo\r")),
+                EditOrigin::SystemEdit,
+                selection,
+                ctx,
+            );
+
+            assert_eq!(buffer.text().as_str(), "One\rTwo\r");
+        });
+    });
+}
+
+#[test]
 fn test_unindent_panic_simpler_case() {
     // This verifies unindent does not invalidate selection anchors.
     App::test((), |mut app| async move {
