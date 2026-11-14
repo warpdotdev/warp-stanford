@@ -782,3 +782,50 @@ fn test_hide_multiple_child_agent_panes() {
     assert_eq!(tree.visible_pane_ids(), vec![panes[0], panes[1]]);
     assert!(tree.is_pane_hidden(&panes[2]));
 }
+
+#[test]
+fn test_divider_appearance_follows_pane_settings() {
+    use settings::Setting;
+    use warp_core::ui::theme::AnsiColorIdentifier;
+    use warpui::App;
+
+    use crate::appearance::Appearance;
+    use crate::settings::PaneDividerThickness;
+    use crate::test_util::settings::initialize_settings_for_tests;
+
+    App::test((), |mut app| async move {
+        initialize_settings_for_tests(&mut app);
+        let appearance = Appearance::mock();
+        let theme = appearance.theme();
+
+        app.update(|ctx| {
+            assert_eq!(
+                divider_fill(theme, ctx),
+                theme.split_pane_border_color(),
+                "Divider should use the theme color by default"
+            );
+            let default_thickness = get_divider_thickness(ctx);
+
+            PaneSettings::handle(ctx).update(ctx, |settings, ctx| {
+                settings
+                    .pane_divider_color
+                    .set_value(Some(AnsiColorIdentifier::Green), ctx)
+                    .unwrap();
+                settings
+                    .pane_divider_thickness
+                    .set_value(PaneDividerThickness::Thick, ctx)
+                    .unwrap();
+            });
+
+            assert_eq!(
+                divider_fill(theme, ctx),
+                Fill::from(theme.terminal_colors().normal.green)
+            );
+            assert_eq!(
+                Some(get_divider_thickness(ctx)),
+                PaneDividerThickness::Thick.pixels()
+            );
+            assert!(get_divider_thickness(ctx) > default_thickness);
+        });
+    });
+}

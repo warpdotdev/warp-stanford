@@ -6,6 +6,7 @@ use std::rc::Rc;
 
 use ::settings::{Setting, SettingSection, ToggleableSetting};
 use enum_iterator::all;
+use warp_core::ui::theme::AnsiColorIdentifier;
 use warp_core::ui::theme::color::internal_colors;
 use warp_errors::{report_error, report_if_error};
 use warp_util::path::user_friendly_path;
@@ -61,7 +62,8 @@ use crate::settings::{
     AIFontName, AISettings, AppEditorSettings, CodeSettings, CursorBlink, CursorBlinkEnabled,
     CursorDisplayType, DEFAULT_MONOSPACE_FONT_NAME, EnforceMinimumContrast, FocusPaneOnHover,
     FontSettings, FontSettingsChangedEvent, GPUSettings, InputBoxType, InputModeSettings,
-    InputModeState, InputSettings, InputSettingsChangedEvent, MonospaceFontName, PaneSettings,
+    InputModeState, InputSettings, InputSettingsChangedEvent, MonospaceFontName, PaneDividerColor,
+    PaneDividerThickness, PaneDividerThicknessSetting, PaneSettings, PaneSettingsChangedEvent,
     ShouldDimInactivePanes, ThemeSettings, UseSystemTheme, UseThinStrokes, active_theme_kind,
     respect_system_theme,
 };
@@ -485,6 +487,8 @@ pub enum AppearancePageAction {
     ToggleRespectSystemTheme,
     ToggleOpenWindowsAtCustomSize,
     ToggleDimInactivePanes,
+    SetPaneDividerColor(Option<AnsiColorIdentifier>),
+    SetPaneDividerThickness(PaneDividerThickness),
     ToggleAllAvailableFonts,
     ToggleMatchNotebookToMonospaceFontSize,
     ToggleMatchAIToTerminalFontFamily,
@@ -541,6 +545,7 @@ pub struct AppearanceSettingsPageView {
     enforce_min_contrast_dropdown: ViewHandle<Dropdown<AppearancePageAction>>,
     input_mode_dropdown: ViewHandle<Dropdown<AppearancePageAction>>,
     window_backdrop_dropdown: ViewHandle<Dropdown<AppearancePageAction>>,
+    pane_divider_thickness_dropdown: ViewHandle<Dropdown<AppearancePageAction>>,
     input_type_radio_state: RadioButtonStateHandle,
     app_icon_dropdown: ViewHandle<Dropdown<AppearancePageAction>>,
     workspace_decorations_dropdown: ViewHandle<Dropdown<AppearancePageAction>>,
@@ -626,6 +631,8 @@ impl TypedActionView for AppearanceSettingsPageView {
             ToggleRespectSystemTheme => self.toggle_respect_system_theme(ctx),
             ToggleAllAvailableFonts => self.toggle_all_available_fonts(ctx),
             ToggleDimInactivePanes => self.toggle_dim_inactive_panes(ctx),
+            SetPaneDividerColor(color) => self.set_pane_divider_color(*color, ctx),
+            SetPaneDividerThickness(thickness) => self.set_pane_divider_thickness(*thickness, ctx),
             SetWindowBackdrop(backdrop) => self.set_window_backdrop(*backdrop, ctx),
             ToggleLeftPanelVisibility => self.toggle_left_panel_visibility(ctx),
             ToggleToolsPanelProjectExplorer => {
@@ -871,7 +878,22 @@ impl AppearanceSettingsPageView {
         let appearance_handle = Appearance::handle(ctx);
         ctx.subscribe_to_model(&appearance_handle, Self::handle_appearance_update);
 
-        ctx.subscribe_to_model(&PaneSettings::handle(ctx), |_, _, _, ctx| {
+        ctx.subscribe_to_model(&PaneSettings::handle(ctx), |me, _, event, ctx| {
+            match event {
+                PaneSettingsChangedEvent::PaneDividerThicknessSetting { .. } => {
+                    let thickness = *PaneSettings::as_ref(ctx).pane_divider_thickness;
+                    me.pane_divider_thickness_dropdown
+                        .update(ctx, |dropdown, ctx| {
+                            dropdown.set_selected_by_action(
+                                AppearancePageAction::SetPaneDividerThickness(thickness),
+                                ctx,
+                            );
+                        });
+                }
+                PaneSettingsChangedEvent::ShouldDimInactivePanes { .. }
+                | PaneSettingsChangedEvent::FocusPaneOnHover { .. }
+                | PaneSettingsChangedEvent::PaneDividerColor { .. } => {}
+            }
             ctx.notify();
         });
 
@@ -1326,6 +1348,7 @@ impl AppearanceSettingsPageView {
             thin_strokes_dropdown,
             input_mode_dropdown,
             window_backdrop_dropdown: Self::build_window_backdrop_dropdown(ctx),
+            pane_divider_thickness_dropdown: Self::build_pane_divider_thickness_dropdown(ctx),
             input_type_radio_state,
             app_icon_dropdown,
             enforce_min_contrast_dropdown,
@@ -1450,6 +1473,8 @@ impl AppearanceSettingsPageView {
             vec![
                 Box::new(DimInactivePanesWidget::default()),
                 Box::new(FocusFollowsMouseWidget::default()),
+                Box::new(PaneDividerColorWidget::default()),
+                Box::new(PaneDividerThicknessWidget),
             ],
         ));
 
@@ -2323,6 +2348,30 @@ impl AppearanceSettingsPageView {
         });
     }
 
+    fn set_pane_divider_color(
+        &mut self,
+        color: Option<AnsiColorIdentifier>,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        PaneSettings::handle(ctx).update(ctx, |pane_settings, ctx| {
+            report_if_error!(pane_settings.pane_divider_color.set_value(color, ctx));
+        });
+    }
+
+    fn set_pane_divider_thickness(
+        &mut self,
+        thickness: PaneDividerThickness,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        PaneSettings::handle(ctx).update(ctx, |pane_settings, ctx| {
+            report_if_error!(
+                pane_settings
+                    .pane_divider_thickness
+                    .set_value(thickness, ctx)
+            );
+        });
+    }
+
     fn set_window_backdrop(&mut self, backdrop: WindowBackdrop, ctx: &mut ViewContext<Self>) {
         WindowSettings::handle(ctx).update(ctx, |window_settings, ctx| {
             report_if_error!(window_settings.background_backdrop.set_value(backdrop, ctx));
@@ -2606,6 +2655,41 @@ impl AppearanceSettingsPageView {
             WindowBackdrop::MicaAlt => "Mica Alt",
         }
     }
+
+    fn build_pane_divider_thickness_dropdown(
+        ctx: &mut ViewContext<Self>,
+    ) -> ViewHandle<Dropdown<AppearancePageAction>> {
+        ctx.add_typed_action_view(|ctx| {
+            let mut dropdown = Dropdown::new(ctx);
+            dropdown.set_items(
+                all::<PaneDividerThickness>()
+                    .map(|thickness| {
+                        DropdownItem::new(
+                            Self::pane_divider_thickness_dropdown_item_label(thickness),
+                            AppearancePageAction::SetPaneDividerThickness(thickness),
+                        )
+                    })
+                    .collect(),
+                ctx,
+            );
+            dropdown.set_selected_by_action(
+                AppearancePageAction::SetPaneDividerThickness(
+                    *PaneSettings::as_ref(ctx).pane_divider_thickness,
+                ),
+                ctx,
+            );
+            dropdown
+        })
+    }
+
+    fn pane_divider_thickness_dropdown_item_label(thickness: PaneDividerThickness) -> &'static str {
+        match thickness {
+            PaneDividerThickness::Default => "Default",
+            PaneDividerThickness::Medium => "Medium",
+            PaneDividerThickness::Thick => "Thick",
+        }
+    }
+
     fn build_workspace_decoration_visibility_dropdown(
         ctx: &mut ViewContext<Self>,
     ) -> ViewHandle<Dropdown<AppearancePageAction>> {
@@ -3947,6 +4031,121 @@ impl SettingsWidget for DimInactivePanesWidget {
                 })
                 .finish(),
             None,
+        )
+    }
+}
+
+struct PaneDividerColorWidget {
+    dot_mouse_states: Vec<MouseStateHandle>,
+}
+
+impl Default for PaneDividerColorWidget {
+    fn default() -> Self {
+        Self {
+            dot_mouse_states: (0..TAB_COLOR_OPTIONS.len() + 1)
+                .map(|_| MouseStateHandle::default())
+                .collect(),
+        }
+    }
+}
+
+impl SettingsWidget for PaneDividerColorWidget {
+    type View = AppearanceSettingsPageView;
+
+    fn search_terms(&self) -> &str {
+        "pane divider color split border separator"
+    }
+
+    fn render(
+        &self,
+        view: &Self::View,
+        appearance: &Appearance,
+        app: &AppContext,
+    ) -> Box<dyn Element> {
+        let theme = appearance.theme();
+        let current_color = *PaneSettings::as_ref(app).pane_divider_color;
+
+        let mut dots_row = Flex::row().with_cross_axis_alignment(CrossAxisAlignment::Center);
+        let color_options =
+            std::iter::once(None).chain(TAB_COLOR_OPTIONS.iter().copied().map(Some));
+        for (ansi_id, mouse_state) in color_options.zip(self.dot_mouse_states.iter().cloned()) {
+            let dot_color = match ansi_id {
+                None => pathfinder_color::ColorU::transparent_black(),
+                Some(id) => id.to_ansi_color(&theme.terminal_colors().normal).into(),
+            };
+            let tooltip_text = match ansi_id {
+                None => "Default (theme color)".to_string(),
+                Some(id) => id.to_string(),
+            };
+            let is_selected = current_color == ansi_id;
+
+            dots_row.add_child(
+                render_color_dot(
+                    mouse_state,
+                    dot_color,
+                    is_selected,
+                    theme.accent().into(),
+                    ansi_id.is_none(),
+                    theme.foreground(),
+                    tooltip_text,
+                    appearance,
+                )
+                .on_click(move |ctx, _, _| {
+                    if !is_selected {
+                        ctx.dispatch_typed_action(AppearancePageAction::SetPaneDividerColor(
+                            ansi_id,
+                        ));
+                    }
+                })
+                .finish(),
+            );
+        }
+
+        render_body_item::<AppearancePageAction>(
+            "Pane divider color".into(),
+            None,
+            LocalOnlyIconState::for_setting(
+                PaneDividerColor::storage_key(),
+                PaneDividerColor::sync_to_cloud(),
+                &mut view.local_only_icon_tooltip_states.borrow_mut(),
+                app,
+            ),
+            ToggleState::Enabled,
+            appearance,
+            dots_row.finish(),
+            Some("Color of the divider between split panes.".into()),
+        )
+    }
+}
+
+struct PaneDividerThicknessWidget;
+
+impl SettingsWidget for PaneDividerThicknessWidget {
+    type View = AppearanceSettingsPageView;
+
+    fn search_terms(&self) -> &str {
+        "pane divider thickness width split border separator"
+    }
+
+    fn render(
+        &self,
+        view: &Self::View,
+        appearance: &Appearance,
+        app: &AppContext,
+    ) -> Box<dyn Element> {
+        render_dropdown_item(
+            appearance,
+            "Pane divider thickness",
+            None,
+            None,
+            LocalOnlyIconState::for_setting(
+                PaneDividerThicknessSetting::storage_key(),
+                PaneDividerThicknessSetting::sync_to_cloud(),
+                &mut view.local_only_icon_tooltip_states.borrow_mut(),
+                app,
+            ),
+            None,
+            &view.pane_divider_thickness_dropdown,
         )
     }
 }
