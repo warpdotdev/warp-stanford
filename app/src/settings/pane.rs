@@ -1,8 +1,38 @@
 use enum_iterator::Sequence;
+use pathfinder_color::ColorU;
 use serde::{Deserialize, Serialize};
 use settings::macros::define_settings_group;
 use settings::{RespectUserSyncSetting, SupportedPlatforms, SyncToCloud};
-use warp_core::ui::theme::AnsiColorIdentifier;
+use warp_core::ui::color::hex_color;
+use warp_core::ui::theme::{AnsiColorIdentifier, WarpTheme};
+
+/// A color for the divider between split panes.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize, schemars::JsonSchema)]
+#[serde(untagged)]
+#[schemars(
+    description = "Either the name of a standard ANSI terminal color, or a hex color such as \"#39ff14\"."
+)]
+pub enum PaneDividerColorChoice {
+    /// One of the theme's ANSI colors, which changes along with the theme.
+    Ansi(AnsiColorIdentifier),
+    /// A fixed color that is independent of the theme.
+    Custom(
+        #[serde(with = "hex_color")]
+        #[schemars(with = "String")]
+        ColorU,
+    ),
+}
+
+impl PaneDividerColorChoice {
+    pub fn resolve(self, theme: &WarpTheme) -> ColorU {
+        match self {
+            Self::Ansi(color) => color.to_ansi_color(&theme.terminal_colors().normal).into(),
+            Self::Custom(color) => color,
+        }
+    }
+}
+
+impl settings_value::SettingsValue for PaneDividerColorChoice {}
 
 #[derive(
     Clone,
@@ -61,14 +91,14 @@ define_settings_group!(PaneSettings, settings: [
         description: "Whether panes are focused when hovered over.",
     },
     pane_divider_color: PaneDividerColor {
-        type: Option<AnsiColorIdentifier>,
+        type: Option<PaneDividerColorChoice>,
         default: None,
         supported_platforms: SupportedPlatforms::ALL,
         sync_to_cloud: SyncToCloud::Globally(RespectUserSyncSetting::Yes),
         surface: settings::SettingSurfaces::GUI,
         private: false,
         toml_path: "appearance.panes.pane_divider_color",
-        description: "The terminal theme color used for the divider between split panes. When unset, the theme's default divider color is used.",
+        description: "The color of the divider between split panes: a standard ANSI color name from the terminal theme, or a hex color. When unset, the theme's default divider color is used.",
     },
     pane_divider_thickness: PaneDividerThicknessSetting {
         type: PaneDividerThickness,

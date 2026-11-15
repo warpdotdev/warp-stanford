@@ -1,10 +1,11 @@
+use pathfinder_color::ColorU;
 use settings::Setting;
 use warp_core::ui::theme::AnsiColorIdentifier;
 use warpui::App;
 
 use super::*;
 use crate::appearance::Appearance;
-use crate::settings::PaneDividerThickness;
+use crate::settings::{PaneDividerColorChoice, PaneDividerThickness};
 use crate::test_util::settings::initialize_settings_for_tests;
 
 #[test]
@@ -808,7 +809,10 @@ fn test_divider_appearance_follows_pane_settings() {
             PaneSettings::handle(ctx).update(ctx, |settings, ctx| {
                 settings
                     .pane_divider_color
-                    .set_value(Some(AnsiColorIdentifier::Green), ctx)
+                    .set_value(
+                        Some(PaneDividerColorChoice::Ansi(AnsiColorIdentifier::Green)),
+                        ctx,
+                    )
                     .unwrap();
                 settings
                     .pane_divider_thickness
@@ -825,6 +829,19 @@ fn test_divider_appearance_follows_pane_settings() {
                 PaneDividerThickness::Thick.pixels()
             );
             assert!(get_divider_thickness(ctx) > default_thickness);
+
+            let bright_green = ColorU::new(0x39, 0xff, 0x14, 0xff);
+            PaneSettings::handle(ctx).update(ctx, |settings, ctx| {
+                settings
+                    .pane_divider_color
+                    .set_value(Some(PaneDividerColorChoice::Custom(bright_green)), ctx)
+                    .unwrap();
+            });
+            assert_eq!(
+                divider_fill(theme, ctx),
+                Fill::from(bright_green),
+                "A custom color should be used as-is, independent of the theme"
+            );
         });
     });
 }

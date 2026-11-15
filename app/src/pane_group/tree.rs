@@ -43,7 +43,7 @@ pub fn get_divider_thickness(ctx: &AppContext) -> f32 {
 
 fn divider_fill(theme: &WarpTheme, ctx: &AppContext) -> Fill {
     match *PaneSettings::as_ref(ctx).pane_divider_color {
-        Some(color) => color.to_ansi_color(&theme.terminal_colors().normal).into(),
+        Some(color) => color.resolve(theme).into(),
         None => theme.split_pane_border_color(),
     }
 }
