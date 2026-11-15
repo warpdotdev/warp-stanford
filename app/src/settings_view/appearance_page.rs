@@ -4035,6 +4035,19 @@ impl SettingsWidget for DimInactivePanesWidget {
     }
 }
 
+/// The choices offered for the pane divider color, where `None` is the theme's default.
+const PANE_DIVIDER_COLOR_OPTIONS: [Option<AnsiColorIdentifier>; 9] = [
+    None,
+    Some(AnsiColorIdentifier::Red),
+    Some(AnsiColorIdentifier::Green),
+    Some(AnsiColorIdentifier::Yellow),
+    Some(AnsiColorIdentifier::Blue),
+    Some(AnsiColorIdentifier::Magenta),
+    Some(AnsiColorIdentifier::Cyan),
+    Some(AnsiColorIdentifier::White),
+    Some(AnsiColorIdentifier::Black),
+];
+
 struct PaneDividerColorWidget {
     dot_mouse_states: Vec<MouseStateHandle>,
 }
@@ -4042,7 +4055,8 @@ struct PaneDividerColorWidget {
 impl Default for PaneDividerColorWidget {
     fn default() -> Self {
         Self {
-            dot_mouse_states: (0..TAB_COLOR_OPTIONS.len() + 1)
+            dot_mouse_states: PANE_DIVIDER_COLOR_OPTIONS
+                .iter()
                 .map(|_| MouseStateHandle::default())
                 .collect(),
         }
@@ -4066,9 +4080,10 @@ impl SettingsWidget for PaneDividerColorWidget {
         let current_color = *PaneSettings::as_ref(app).pane_divider_color;
 
         let mut dots_row = Flex::row().with_cross_axis_alignment(CrossAxisAlignment::Center);
-        let color_options =
-            std::iter::once(None).chain(TAB_COLOR_OPTIONS.iter().copied().map(Some));
-        for (ansi_id, mouse_state) in color_options.zip(self.dot_mouse_states.iter().cloned()) {
+        for (ansi_id, mouse_state) in PANE_DIVIDER_COLOR_OPTIONS
+            .into_iter()
+            .zip(self.dot_mouse_states.iter().cloned())
+        {
             let dot_color = match ansi_id {
                 None => pathfinder_color::ColorU::transparent_black(),
                 Some(id) => id.to_ansi_color(&theme.terminal_colors().normal).into(),

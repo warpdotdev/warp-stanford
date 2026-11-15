@@ -1,4 +1,11 @@
+use settings::Setting;
+use warp_core::ui::theme::AnsiColorIdentifier;
+use warpui::App;
+
 use super::*;
+use crate::appearance::Appearance;
+use crate::settings::PaneDividerThickness;
+use crate::test_util::settings::initialize_settings_for_tests;
 
 #[test]
 fn test_split_pane_layout() {
@@ -785,14 +792,6 @@ fn test_hide_multiple_child_agent_panes() {
 
 #[test]
 fn test_divider_appearance_follows_pane_settings() {
-    use settings::Setting;
-    use warp_core::ui::theme::AnsiColorIdentifier;
-    use warpui::App;
-
-    use crate::appearance::Appearance;
-    use crate::settings::PaneDividerThickness;
-    use crate::test_util::settings::initialize_settings_for_tests;
-
     App::test((), |mut app| async move {
         initialize_settings_for_tests(&mut app);
         let appearance = Appearance::mock();

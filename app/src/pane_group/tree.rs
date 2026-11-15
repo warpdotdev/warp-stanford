@@ -28,8 +28,8 @@ mod tests;
 pub(in crate::pane_group) const DEFAULT_FLEX_VALUE: f32 = 1.0;
 pub(in crate::pane_group) const DEFAULT_FLEX_SIZE: PaneFlex = PaneFlex(DEFAULT_FLEX_VALUE);
 
-pub fn get_divider_thickness(app: &AppContext) -> f32 {
-    PaneSettings::as_ref(app)
+pub fn get_divider_thickness(ctx: &AppContext) -> f32 {
+    PaneSettings::as_ref(ctx)
         .pane_divider_thickness
         .pixels()
         .unwrap_or_else(|| {
@@ -41,8 +41,8 @@ pub fn get_divider_thickness(app: &AppContext) -> f32 {
         })
 }
 
-fn divider_fill(theme: &WarpTheme, app: &AppContext) -> Fill {
-    match *PaneSettings::as_ref(app).pane_divider_color {
+fn divider_fill(theme: &WarpTheme, ctx: &AppContext) -> Fill {
+    match *PaneSettings::as_ref(ctx).pane_divider_color {
         Some(color) => color.to_ansi_color(&theme.terminal_colors().normal).into(),
         None => theme.split_pane_border_color(),
     }
@@ -1515,8 +1515,10 @@ fn create_minimalist_divider(
     match direction {
         SplitDirection::Horizontal => stack.add_positioned_child(
             hoverable.finish(),
+            // The placeholder reserves `thickness - 1`, so shift the centered line by half of
+            // that to cover the reserved space instead of straddling its leading edge.
             OffsetPositioning::offset_from_parent(
-                Vector2F::new(0., 0.),
+                Vector2F::new((thickness - 1.) / 2., 0.),
                 ParentOffsetBounds::Unbounded,
                 ParentAnchor::TopMiddle,
                 ChildAnchor::TopMiddle,
