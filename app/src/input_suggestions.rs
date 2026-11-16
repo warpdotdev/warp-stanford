@@ -25,6 +25,7 @@ use warpui::elements::{
     UniformList, UniformListState, XAxisAnchor, YAxisAnchor,
 };
 use warpui::fonts::{Cache, Properties, Weight};
+use warpui::text_layout::{ClipConfig, ClipDirection, ClipStyle};
 use warpui::ui_components::components::{Coords, UiComponent, UiComponentStyles};
 use warpui::{
     AppContext, Entity, SingletonEntity, TypedActionView, View, ViewContext, WeakViewHandle,
@@ -172,6 +173,23 @@ impl ItemIconType {
                 FILE_FOLDER_ICON_PADDING_RIGHT - ICON_PADDING_RIGHT
             }
             _ => 0.,
+        }
+    }
+
+    /// How to clip an item's text when it is wider than the row, or `None` to keep the default
+    /// layout. File and folder names that share a long prefix usually differ near the end, so
+    /// those rows drop the front of the name behind an ellipsis to keep the end visible.
+    pub fn display_text_clip(&self) -> Option<ClipConfig> {
+        match self {
+            ItemIconType::File | ItemIconType::Folder => Some(ClipConfig {
+                direction: ClipDirection::Start,
+                style: ClipStyle::Ellipsis,
+            }),
+            ItemIconType::Option
+            | ItemIconType::Argument
+            | ItemIconType::SubCommand
+            | ItemIconType::GitBranch
+            | ItemIconType::AIQuery => None,
         }
     }
 }
@@ -848,7 +866,21 @@ impl InputSuggestions {
                                     display_text =
                                         display_text.with_single_highlight(highlight, matches);
                                 }
-                                display_text.finish()
+
+                                match item
+                                    .icon_type
+                                    .as_ref()
+                                    .and_then(ItemIconType::display_text_clip)
+                                {
+                                    // `Flex` lays out a non-flexible child at unbounded width, so
+                                    // the text has to be shrinkable for the clip to take effect.
+                                    // A loose fit leaves names that fit at their natural width.
+                                    Some(clip) => {
+                                        Shrinkable::new(1., display_text.with_clip(clip).finish())
+                                            .finish()
+                                    }
+                                    None => display_text.finish(),
+                                }
                             });
 
                             if let Some(DetailContent::Description(desc)) = &item.details {

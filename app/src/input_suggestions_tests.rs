@@ -9,8 +9,11 @@ use warp_completer::meta::Span;
 use warp_core::ui::appearance::Appearance;
 use warpui::App;
 use warpui::platform::WindowStyle;
+use warpui::text_layout::{ClipDirection, ClipStyle};
 
-use super::{HistoryInputSuggestion, InputSuggestions, TabCompletionsPreselectOption};
+use super::{
+    HistoryInputSuggestion, InputSuggestions, ItemIconType, TabCompletionsPreselectOption,
+};
 use crate::ai::blocklist::AIQueryHistory;
 use crate::input_suggestions::{HistoryOrder, filter_tab_suggestions};
 use crate::terminal::HistoryEntry;
@@ -401,4 +404,28 @@ fn test_history_order() {
         ai_query_different.history_order(Some(current_session_id), &live_sessions,),
         HistoryOrder::DifferentSession
     );
+}
+
+#[test]
+fn test_file_and_folder_rows_clip_long_names_from_the_start() {
+    for icon_type in [ItemIconType::File, ItemIconType::Folder] {
+        let clip = icon_type
+            .display_text_clip()
+            .unwrap_or_else(|| panic!("{icon_type:?} rows should clip long names"));
+        assert_eq!(clip.direction, ClipDirection::Start, "{icon_type:?}");
+        assert_eq!(clip.style, ClipStyle::Ellipsis, "{icon_type:?}");
+    }
+}
+
+#[test]
+fn test_other_rows_keep_the_default_text_layout() {
+    for icon_type in [
+        ItemIconType::Option,
+        ItemIconType::Argument,
+        ItemIconType::SubCommand,
+        ItemIconType::GitBranch,
+        ItemIconType::AIQuery,
+    ] {
+        assert_eq!(icon_type.display_text_clip(), None, "{icon_type:?}");
+    }
 }
