@@ -194,6 +194,47 @@ impl ItemIconType {
     }
 }
 
+/// Adds an item's text and optional description to a suggestion row.
+///
+/// Without a `clip`, the row keeps its default layout. With one, the text is clipped to whatever
+/// width the description leaves free (see [`add_clipped_item_label_to_row`]).
+fn add_item_label_to_row(
+    row: &mut Flex,
+    text: Text,
+    clip: Option<ClipConfig>,
+    description: Option<Box<dyn Element>>,
+) {
+    match clip {
+        Some(clip) => {
+            add_clipped_item_label_to_row(row, text.with_clip(clip).finish(), description)
+        }
+        None => {
+            row.add_child(text.finish());
+            if let Some(description) = description {
+                row.add_child(Shrinkable::new(1., description).finish());
+            }
+        }
+    }
+}
+
+/// Adds clipped item text and an optional description to a suggestion row, giving the
+/// description its natural width and the text all of the width that is left.
+///
+/// `Flex` lays out non-flexible children first at their natural width and then splits the
+/// remaining width between flexible ones. Only the text is flexible here, so it gets all of the
+/// leftover width. It has to be flexible for its clip to take effect at all, since a non-flexible
+/// child is laid out at unbounded width.
+fn add_clipped_item_label_to_row(
+    row: &mut Flex,
+    text: Box<dyn Element>,
+    description: Option<Box<dyn Element>>,
+) {
+    row.add_child(Shrinkable::new(1., text).finish());
+    if let Some(description) = description {
+        row.add_child(description);
+    }
+}
+
 fn icon_type(suggestion: &Suggestion) -> ItemIconType {
     suggestion
         .override_icon
@@ -844,68 +885,58 @@ impl InputSuggestions {
                                 row.add_child(icon_container);
                             }
 
-                            row.add_child({
-                                let mut display_text = Text::new_inline(
-                                    display_text_str,
-                                    appearance.monospace_font_family(),
-                                    font_size,
-                                )
-                                .with_style(
-                                    Properties::default()
-                                        .weight(appearance.monospace_font_weight()),
-                                )
-                                .autosize_text(warp_core::ui::builder::MIN_FONT_SIZE)
-                                .with_color(main_text);
+                            let mut display_text = Text::new_inline(
+                                display_text_str,
+                                appearance.monospace_font_family(),
+                                font_size,
+                            )
+                            .with_style(
+                                Properties::default().weight(appearance.monospace_font_weight()),
+                            )
+                            .autosize_text(warp_core::ui::builder::MIN_FONT_SIZE)
+                            .with_color(main_text);
 
-                                let matches = item.matches.clone();
-                                if let Some(matches) = matches {
-                                    let highlight = Highlight::new()
-                                        .with_properties(Properties::default().weight(Weight::Bold))
-                                        .with_foreground_color(highlight_text);
+                            let matches = item.matches.clone();
+                            if let Some(matches) = matches {
+                                let highlight = Highlight::new()
+                                    .with_properties(Properties::default().weight(Weight::Bold))
+                                    .with_foreground_color(highlight_text);
 
-                                    display_text =
-                                        display_text.with_single_highlight(highlight, matches);
-                                }
+                                display_text =
+                                    display_text.with_single_highlight(highlight, matches);
+                            }
 
-                                match item
-                                    .icon_type
-                                    .as_ref()
-                                    .and_then(ItemIconType::display_text_clip)
-                                {
-                                    // `Flex` lays out a non-flexible child at unbounded width, so
-                                    // the text has to be shrinkable for the clip to take effect.
-                                    // A loose fit leaves names that fit at their natural width.
-                                    Some(clip) => {
-                                        Shrinkable::new(1., display_text.with_clip(clip).finish())
-                                            .finish()
-                                    }
-                                    None => display_text.finish(),
-                                }
-                            });
-
-                            if let Some(DetailContent::Description(desc)) = &item.details {
-                                row.add_child(
-                                    Shrinkable::new(
-                                        1.,
-                                        Container::new(
-                                            Text::new_inline(
-                                                desc.clone(),
-                                                appearance.ui_font_family(),
-                                                font_size,
-                                            )
-                                            .with_style(
-                                                Properties::default()
-                                                    .weight(appearance.monospace_font_weight()),
-                                            )
-                                            .with_color(description_text)
-                                            .finish(),
+                            let description = match &item.details {
+                                Some(DetailContent::Description(desc)) => Some(
+                                    Container::new(
+                                        Text::new_inline(
+                                            desc.clone(),
+                                            appearance.ui_font_family(),
+                                            font_size,
                                         )
-                                        .with_padding_left(DESCRIPTION_PADDING)
+                                        .with_style(
+                                            Properties::default()
+                                                .weight(appearance.monospace_font_weight()),
+                                        )
+                                        .with_color(description_text)
                                         .finish(),
                                     )
+                                    .with_padding_left(DESCRIPTION_PADDING)
                                     .finish(),
-                                );
-                            }
+                                ),
+                                Some(DetailContent::RichHistory(_))
+                                | Some(DetailContent::AIQueryHistory(_))
+                                | None => None,
+                            };
+
+                            add_item_label_to_row(
+                                &mut row,
+                                display_text,
+                                item.icon_type
+                                    .as_ref()
+                                    .and_then(ItemIconType::display_text_clip),
+                                description,
+                            );
 
                             if FeatureFlag::AllowIgnoringInputSuggestions.is_enabled()
                                 && item.is_history_item
