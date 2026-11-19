@@ -29,6 +29,15 @@ pub fn is_expandable_alias(alias: &str, alias_value: &str) -> bool {
     false
 }
 
+/// Returns whether the alias can be expanded by Warp when the user types a space after it.
+///
+/// Aliases whose name starts with `-` (e.g. oh-my-zsh's `alias -- -='cd -'`) are not expanded on
+/// space, because a leading-dash token followed by more text is an option or a list marker, not a
+/// command. Without this, typing `- item` would become `cd - item`.
+pub fn is_expandable_alias_on_space(alias: &str, alias_value: &str) -> bool {
+    !alias.starts_with('-') && is_expandable_alias(alias, alias_value)
+}
+
 /// Searches the source text for any aliases in a command position. Returns
 /// information about the alias if found.
 fn check_for_alias(source: &str, session: Arc<Session>) -> Option<AliasedCommand> {
