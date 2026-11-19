@@ -270,6 +270,10 @@ pub struct WorkingDirectoriesModel {
     /// - the detected repository root when the path belongs to a repo
     /// - otherwise, the normalized path itself (local) or the remote CWD/editor path
     ///
+    /// When `use_working_directory_roots` is on, local roots are instead each terminal's
+    /// working directory, plus the directory of any open file that is neither under nor above
+    /// one of those working directories. Remote roots are unaffected.
+    ///
     /// IndexSet maintains insertion order - most recently added directories appear later.
     pane_groups: HashMap<EntityId, IndexSet<LocalOrRemotePath>>,
     /// Per-pane-group tracking of active repository roots as a deduplicated, ordered set.
@@ -300,6 +304,10 @@ pub struct WorkingDirectoriesModel {
     selected_review_repo: HashMap<EntityId, LocalOrRemotePath>,
     global_search_views: HashMap<EntityId, ViewHandle<GlobalSearchView>>,
     file_tree_views: HashMap<EntityId, ViewHandle<FileTreeView>>,
+    /// Whether local display roots stay at each terminal's working directory instead of
+    /// collapsing to the enclosing repository root. Mirrors the
+    /// `project_explorer_uses_working_directory` setting.
+    use_working_directory_roots: bool,
 }
 
 #[derive(Default)]
@@ -324,6 +332,13 @@ pub fn update_index_set(
 impl WorkingDirectoriesModel {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Sets whether local display roots stay at each terminal's working directory instead of
+    /// collapsing to the enclosing repository root. Takes effect on the next refresh of each
+    /// pane group.
+    pub fn set_use_working_directory_roots(&mut self, enabled: bool) {
+        self.use_working_directory_roots = enabled;
     }
 
     /// Get the unique directories for a specific pane group in insertion order (oldest first).
@@ -629,8 +644,13 @@ impl WorkingDirectoriesModel {
         let old_focused_repo: Option<LocalOrRemotePath> =
             self.focused_repo.get(&pane_group_id).cloned().flatten();
 
-        // Resolve a local path to its detected repository root, or keep the path as-is if no repo is found.
+        // Resolve a local path to its detected repository root, or keep the path as-is if no repo
+        // is found or the left panel is set to use working directories.
+        let use_working_directory_roots = self.use_working_directory_roots;
         let root_for_path = |path: PathBuf| {
+            if use_working_directory_roots {
+                return path;
+            }
             DetectedRepositories::as_ref(ctx)
                 .get_root_for_path(&LocalOrRemotePath::Local(path.clone()))
                 .and_then(|r| PathBuf::try_from(r).ok())
@@ -653,7 +673,7 @@ impl WorkingDirectoriesModel {
             }
         }
 
-        // Collapse working directories to their nearest repository root (when detected).
+        // Resolve working directories to their display roots (the nearest repository root by default).
         let mut file_path_ancestors: HashSet<PathBuf> = local_terminal_cwds
             .iter()
             .filter_map(|(_, cwd)| root_for_raw_path(cwd))
@@ -673,13 +693,28 @@ impl WorkingDirectoriesModel {
             }
         }
 
+        let terminal_roots: Vec<PathBuf> = file_path_ancestors.iter().cloned().collect();
         let local_cwds: Vec<(EntityId, String)> = local_editor_paths
             .into_iter()
             .filter_map(|(view_id, path)| {
                 let path_buf = PathBuf::from(&path);
-                let resolved_path = self
-                    .get_repo_root_for_path(&path_buf, ctx)
-                    .or_else(|| path_buf.parent().map(|p| p.to_path_buf()))?;
+                let resolved_path = if use_working_directory_roots {
+                    // A file under a terminal's directory is already shown. Otherwise use the
+                    // file's own directory, unless that directory contains a terminal's directory:
+                    // the file tree would merge the two and widen back to the ancestor.
+                    let file_path = normalize_cwd(&path).unwrap_or(path_buf);
+                    let file_dir = file_path.parent()?.to_path_buf();
+                    if terminal_roots
+                        .iter()
+                        .any(|root| file_path.starts_with(root) || root.starts_with(&file_dir))
+                    {
+                        return None;
+                    }
+                    file_dir
+                } else {
+                    self.get_repo_root_for_path(&path_buf, ctx)
+                        .or_else(|| path_buf.parent().map(|p| p.to_path_buf()))?
+                };
 
                 if file_path_ancestors.insert(resolved_path.clone()) {
                     Some((view_id, resolved_path.display().to_string()))
@@ -988,6 +1023,8 @@ impl WorkingDirectoriesModel {
     pub fn new() -> Self {
         Self::default()
     }
+
+    pub fn set_use_working_directory_roots(&mut self, _enabled: bool) {}
 
     /// Get the unique directories for a specific pane group in most to least recently added order.
     pub fn most_recent_directories_for_pane_group(
