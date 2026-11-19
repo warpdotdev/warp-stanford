@@ -142,6 +142,7 @@ impl TerminalManager {
             &view,
             model.clone(),
             sessions,
+            &model_events,
             model_event_sender,
             ctx,
         );

@@ -9,7 +9,10 @@ use crate::persistence::ModelEvent;
 use crate::terminal::line_editor_status::LineEditorStatus;
 use crate::terminal::model::session::{ExecutorCommandEvent, Sessions};
 use crate::terminal::model::terminal_model::ExitReason;
-use crate::terminal::writeable_pty::command_history::update_command_history;
+use crate::terminal::model_events::ModelEvent as TerminalModelEvent;
+use crate::terminal::writeable_pty::command_history::{
+    record_shell_expanded_command, update_command_history,
+};
 use crate::terminal::writeable_pty::pty_controller::EventLoopSender;
 use crate::terminal::writeable_pty::{
     PtyController, PtyControllerEvent, PtyIntent, PtyIntentEvent, TerminalSurface,
@@ -30,6 +33,7 @@ pub fn wire_up_pty_controller_with_surface<T: EventLoopSender, S: TerminalSurfac
     surface: &ViewHandle<S>,
     model: Arc<FairMutex<TerminalModel>>,
     sessions: ModelHandle<Sessions>,
+    model_events: &ModelHandle<ModelEventDispatcher>,
     model_event_sender: Option<SyncSender<ModelEvent>>,
     ctx: &mut AppContext,
 ) where
@@ -38,6 +42,34 @@ pub fn wire_up_pty_controller_with_surface<T: EventLoopSender, S: TerminalSurfac
     let controller_weak_handle = pty_controller.downgrade();
     let surface_weak_handle = surface.downgrade();
     let model_clone = model.clone();
+
+    let model_for_history = Arc::downgrade(&model);
+    let sessions_for_history = sessions.downgrade();
+    ctx.subscribe_to_model(model_events, move |_, event, ctx| {
+        let TerminalModelEvent::AfterBlockStarted {
+            block_id,
+            command,
+            shell_reported_command,
+            is_for_in_band_command: false,
+        } = event
+        else {
+            return;
+        };
+        let Some(sessions) = sessions_for_history.upgrade(ctx) else {
+            return;
+        };
+        let Some(model) = model_for_history.upgrade() else {
+            return;
+        };
+        record_shell_expanded_command(
+            block_id,
+            command,
+            shell_reported_command,
+            &model,
+            &sessions,
+            ctx,
+        );
+    });
 
     ctx.subscribe_to_view(surface, move |_surface, event, ctx| {
         // NOTE: we cannot simply use the strong reference (the model handle argument to this wire_up fn)

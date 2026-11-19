@@ -5,6 +5,7 @@ use parking_lot::FairMutex;
 use warpui::{AppContext, ModelHandle, SingletonEntity};
 
 use crate::persistence::{ModelEvent, StartedCommandMetadata};
+use crate::terminal::model::block::BlockId;
 use crate::terminal::model::session::Sessions;
 use crate::terminal::model::session::command_executor::is_in_band_command;
 use crate::terminal::view::ExecuteCommandEvent;
@@ -78,4 +79,43 @@ pub fn update_command_history(
             })
             .detach();
     }
+}
+
+/// Updates the history entry for `block_id` when the shell ran something other than what was
+/// typed, such as `!!` expanded to the previous command. History records the typed text on Enter,
+/// before the shell has expanded it.
+pub fn record_shell_expanded_command(
+    block_id: &BlockId,
+    typed: &str,
+    shell_reported: &str,
+    model: &Arc<FairMutex<TerminalModel>>,
+    sessions: &ModelHandle<Sessions>,
+    ctx: &mut AppContext,
+) {
+    // Look the block up by ID: a fast command may have finished already, so the active block may
+    // not be the one this event is about.
+    let Some((session_id, start_ts)) = model
+        .lock()
+        .block_list()
+        .block_with_id(block_id)
+        .and_then(|block| Some((block.session_id()?, block.start_ts().copied()?)))
+    else {
+        return;
+    };
+    let Some(shell_type) = sessions
+        .as_ref(ctx)
+        .get(session_id)
+        .map(|session| session.shell().shell_type())
+    else {
+        return;
+    };
+    let Some(expanded) =
+        History::shell_expanded_command(typed, shell_reported, shell_type).map(str::to_owned)
+    else {
+        return;
+    };
+
+    History::handle(ctx).update(ctx, |history, _| {
+        history.replace_command(session_id, start_ts, typed, expanded);
+    });
 }

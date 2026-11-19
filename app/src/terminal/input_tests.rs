@@ -106,7 +106,9 @@ use crate::terminal::shell::{Shell, ShellType};
 use crate::terminal::universal_developer_input::UniversalDeveloperInputButtonBarEvent;
 use crate::terminal::view::Event as TerminalViewEvent;
 use crate::terminal::view::inline_banner::ByoLlmAuthBannerSessionState;
-use crate::terminal::writeable_pty::command_history::update_command_history;
+use crate::terminal::writeable_pty::command_history::{
+    record_shell_expanded_command, update_command_history,
+};
 use crate::test_util::assert_eventually;
 use crate::test_util::settings::initialize_settings_for_tests;
 use crate::themes::theme::AnsiColorIdentifier;
@@ -3605,6 +3607,61 @@ fn test_histignorespace_support_in_zsh() {
                     .map(|entry| entry.command.as_str())
                     .collect_vec(),
                 vec!["cd"]
+            );
+        });
+    });
+}
+
+#[cfg_attr(windows, ignore = "TODO(CORE-3626)")]
+#[test]
+fn test_zsh_history_expansion_is_recorded_as_the_expanded_command() {
+    let session_id: SessionId = 1.into();
+    let session_info = SessionInfo::new_for_test()
+        .with_id(session_id)
+        .with_shell_type(ShellType::Zsh);
+
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+
+        let terminal =
+            add_window_with_bootstrapped_terminal(&mut app, None, Some(session_info)).await;
+        let (model, sessions) = terminal.read(&app, |terminal, _| {
+            (terminal.model.clone(), terminal.sessions_model().clone())
+        });
+        let block_id = {
+            let mut model = model.lock();
+            let block = model.block_list_mut().active_block_mut();
+            block.start();
+            block.id().clone()
+        };
+
+        app.update(|ctx| {
+            update_command_history(
+                &ExecuteCommandEvent {
+                    command: "!!".into(),
+                    session_id,
+                    workflow_id: None,
+                    workflow_command: None,
+                    should_add_command_to_history: true,
+                    source: CommandExecutionSource::User,
+                },
+                &model,
+                None,
+                &sessions,
+                ctx,
+            );
+            record_shell_expanded_command(&block_id, "!!", "echo hello", &model, &sessions, ctx);
+        });
+
+        History::handle(&app).read(&app, |history, _ctx| {
+            assert_eq!(
+                history
+                    .commands(session_id)
+                    .unwrap()
+                    .into_iter()
+                    .map(|entry| entry.command.as_str())
+                    .collect_vec(),
+                vec!["echo hello"]
             );
         });
     });

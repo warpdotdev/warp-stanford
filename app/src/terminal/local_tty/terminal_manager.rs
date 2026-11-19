@@ -497,6 +497,7 @@ impl<S> TerminalManager<S> {
             &surface,
             model.clone(),
             sessions.clone(),
+            &model_events,
             model_event_sender,
             ctx,
         );
