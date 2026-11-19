@@ -4,6 +4,82 @@ use markdown_parser::{Hyperlink, parse_inline_markdown};
 use super::*;
 
 #[test]
+fn html_break_offsets_preserve_text_after_the_tag() {
+    let source = "ab<br>cd<br>ef";
+    let map = TableCellOffsetMap::from_inline_and_source(source, &parse_inline_markdown(source));
+    assert_eq!(map.rendered_length(), CharOffset::from(8));
+    assert_eq!(
+        map.rendered_to_source(CharOffset::from(2)),
+        CharOffset::from(2)
+    );
+    assert_eq!(
+        map.rendered_to_source(CharOffset::from(3)),
+        CharOffset::from(6)
+    );
+    assert_eq!(
+        map.rendered_to_source(CharOffset::from(6)),
+        CharOffset::from(12)
+    );
+    assert_eq!(
+        map.source_to_rendered(CharOffset::from(5)),
+        CharOffset::from(3)
+    );
+    assert_eq!(
+        map.source_to_rendered(CharOffset::from(6)),
+        CharOffset::from(3)
+    );
+    assert_eq!(
+        map.source_to_rendered(CharOffset::from(12)),
+        CharOffset::from(6)
+    );
+}
+
+#[test]
+fn html_break_offsets_handle_empty_lines_and_styles() {
+    let source = "**<br><br>x<br>**";
+    let map = TableCellOffsetMap::from_inline_and_source(source, &parse_inline_markdown(source));
+    assert_eq!(map.rendered_length(), CharOffset::from(4));
+    assert_eq!(
+        map.rendered_to_source(CharOffset::from(0)),
+        CharOffset::from(2)
+    );
+    assert_eq!(
+        map.rendered_to_source(CharOffset::from(1)),
+        CharOffset::from(6)
+    );
+    assert_eq!(
+        map.rendered_to_source(CharOffset::from(2)),
+        CharOffset::from(10)
+    );
+    assert_eq!(
+        map.rendered_to_source(CharOffset::from(4)),
+        CharOffset::from(15)
+    );
+}
+
+#[test]
+fn html_break_offsets_preserve_literal_tags() {
+    let source = "ab&lt;br>cd";
+    let map = TableCellOffsetMap::from_inline_and_source(source, &parse_inline_markdown(source));
+    assert_eq!(
+        map.rendered_to_source(CharOffset::from(2)),
+        CharOffset::from(2)
+    );
+    assert_eq!(
+        map.rendered_to_source(CharOffset::from(3)),
+        CharOffset::from(6)
+    );
+    assert_eq!(
+        map.rendered_to_source(CharOffset::from(6)),
+        CharOffset::from(9)
+    );
+    assert_eq!(
+        map.source_to_rendered(CharOffset::from(9)),
+        CharOffset::from(6)
+    );
+}
+
+#[test]
 fn test_simple_table() {
     let map = TableOffsetMap::new(vec![vec![1, 2], vec![3, 1]]);
 

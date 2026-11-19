@@ -1172,7 +1172,14 @@ where
             serializer.start_elem(QualName::new(None, ns!(html), "code".into()), iter::empty())?;
         }
 
-        serializer.write_text(&fragment.text)?;
+        for (index, line) in fragment.text.split('\n').enumerate() {
+            if index > 0 {
+                serializer
+                    .start_elem(QualName::new(None, ns!(html), "br".into()), iter::empty())?;
+                serializer.end_elem(QualName::new(None, ns!(html), "br".into()))?;
+            }
+            serializer.write_text(line)?;
+        }
 
         if styles.is_inline_code() {
             serializer.end_elem(QualName::new(None, ns!(html), "code".into()))?;
@@ -1249,10 +1256,15 @@ fn inline_to_markdown(inline: &FormattedTextInline) -> String {
     let mut previous_styles = TextStylesWithMetadata::default();
     for fragment in inline {
         let next_styles = TextStylesWithMetadata::from(fragment.styles.clone());
+        let text = if fragment.styles.inline_code {
+            fragment.text.clone()
+        } else {
+            fragment.text.replace('<', "&lt;")
+        };
         let content = BufferMarkdownParser::append_formatting(
             &previous_styles,
             &next_styles,
-            fragment.text.as_str(),
+            &text,
             &mut markdown,
         );
         previous_styles = next_styles;
@@ -1287,7 +1299,7 @@ fn alignment_to_gfm_separator(alignment: FormattedTableAlignment) -> String {
 }
 
 fn escape_gfm_table_cell(cell: &str) -> String {
-    cell.replace('|', "\\|")
+    cell.replace('|', "\\|").replace('\n', "<br>")
 }
 
 #[cfg(test)]

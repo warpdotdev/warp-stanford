@@ -9,7 +9,7 @@ use nom::bytes::complete::{
 use nom::character::complete::{char, one_of, satisfy, space0, space1};
 use nom::character::is_digit;
 use nom::combinator::{
-    all_consuming, consumed, eof, fail, flat_map, map, map_parser, recognize, value, verify,
+    all_consuming, consumed, eof, fail, flat_map, map, map_parser, opt, recognize, value, verify,
 };
 use nom::error::{ContextError, ErrorKind, ParseError, context, make_error};
 use nom::multi::{fold_many_m_n, fold_many1, many_m_n, many0};
@@ -327,7 +327,10 @@ fn parse_horizontal_rule<'a, E: ContextError<&'a str> + ParseError<&'a str>>(
 fn parse_markdown_line<'a, E: ContextError<&'a str> + ParseError<&'a str>>(
     markdown: &'a str,
 ) -> IResult<&'a str, Vec<FormattedTextFragment>, E> {
-    map_parser(parse_line, all_consuming(parse_inline))(markdown)
+    map_parser(
+        parse_line,
+        all_consuming(|line| parse_inline_impl(line, false)),
+    )(markdown)
 }
 
 fn parse_header<'a, E: ContextError<&'a str> + ParseError<&'a str>>(
@@ -1022,25 +1025,42 @@ fn not_markdown_line_ending<'a, E: ContextError<&'a str> + ParseError<&'a str>>(
 }
 
 fn parse_inline<'a, E: ContextError<&'a str> + ParseError<&'a str>>(
+    input: &'a str,
+) -> IResult<&'a str, Vec<FormattedTextFragment>, E> {
+    parse_inline_impl(input, true)
+}
+
+fn parse_inline_impl<'a, E: ContextError<&'a str> + ParseError<&'a str>>(
     mut input: &'a str,
+    preserve_trailing_break: bool,
 ) -> IResult<&'a str, Vec<FormattedTextFragment>, E> {
     // We're parsing inline tokens "by hand" instead of using `fold_many0` to allow lookahead.
     let mut state = InlineState::default();
+    let mut trailing_html_break = false;
+    let mut previous_source_char = None;
     while !input.is_empty() {
         let (remaining, token) = parse_inline_token(input)?;
+        let last_source_char = input[..input.len() - remaining.len()].chars().last();
         input = remaining;
 
         match token {
             InlineToken::CodeSpan(text) => {
+                trailing_html_break = false;
                 state.push_closed_node(FormattedTextFragment::inline_code(text));
             }
             InlineToken::Text(text) => {
+                trailing_html_break &= text.trim_matches([' ', '\t']).is_empty();
                 state.push_text(text);
+            }
+            InlineToken::HtmlBreak => {
+                trailing_html_break = true;
+                state.push_closed_node(FormattedTextFragment::plain_text("\n"));
             }
             InlineToken::Comment => {
                 // Comments are metadata; drop them without emitting a fragment.
             }
             InlineToken::AutoLink(url) => {
+                trailing_html_break = false;
                 // Per GFM spec, autolinks can follow whitespace, line beginning, or formatting
                 // delimiters (`*`, `_`, `~`, `(`).
                 // https://github.github.com/gfm/#autolinks-extension-
@@ -1058,14 +1078,18 @@ fn parse_inline<'a, E: ContextError<&'a str> + ParseError<&'a str>>(
                 }
             }
             InlineToken::BackslashEscape(ch) | InlineToken::HtmlEntity(ch) => {
+                trailing_html_break = false;
                 state.push_text(ch);
             }
             InlineToken::Delimiter { kind, count } => {
                 let node_index = state.nodes.len();
-                let preceding_char = state
+                let mut preceding_char = state
                     .nodes
                     .last()
                     .and_then(|fragment| fragment.text.chars().last());
+                if trailing_html_break && preceding_char == Some('\n') {
+                    preceding_char = previous_source_char;
+                }
                 let following_char = remaining.chars().next();
 
                 let delimiter =
@@ -1080,11 +1104,26 @@ fn parse_inline<'a, E: ContextError<&'a str> + ParseError<&'a str>>(
                 input = parse_underline(&mut state, remaining);
             }
         }
+        previous_source_char = last_source_char;
     }
 
     process_emphasis(&mut state, None);
 
     assert!(state.delimiters.is_empty()); // All delimiters should have been processed.
+
+    // A block already supplies its terminating newline; table cells do not.
+    if !preserve_trailing_break && trailing_html_break {
+        for fragment in state.nodes.iter_mut().rev() {
+            if fragment.text.trim_matches([' ', '\t']).is_empty() {
+                fragment.text.clear();
+            } else {
+                if fragment.text.ends_with('\n') {
+                    fragment.text.pop();
+                }
+                break;
+            }
+        }
+    }
 
     Ok((input, consolidate_fragments(state.nodes)))
 }
@@ -1588,6 +1627,10 @@ fn parse_inline_token<'a, E: ContextError<&'a str> + ParseError<&'a str>>(
             // Code spans win over comments, so that `` `<!-- x -->` `` renders literally.
             code_span,
             comment,
+            value(
+                InlineToken::HtmlBreak,
+                tuple((tag_no_case("<br"), space0, opt(char('/')), char('>'))),
+            ),
             parse_inline_token_link_start,
             parse_inline_token_link_end,
             parse_inline_token_asterisk,
@@ -1749,6 +1792,8 @@ enum InlineToken<'a> {
     UnderlineEnd,
     /// An HTML comment, which is discarded rather than rendered.
     Comment,
+    /// An HTML break tag, emitted as a newline.
+    HtmlBreak,
 }
 
 /// An entry in the [delimiter stack](https://spec.commonmark.org/0.30/#delimiter-stack)
