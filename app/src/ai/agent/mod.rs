@@ -1089,6 +1089,7 @@ impl ProgrammingLanguage {
                 "vue" => Some("vue"),
                 "dockerfile" | "docker" | "containerfile" => Some("dockerfile"),
                 "markdown" | "md" => Some("md"),
+                "erb" | "eruby" => Some("erb"),
                 _ => None,
             },
             Self::Shell(ShellType::PowerShell) => Some("ps1"),
