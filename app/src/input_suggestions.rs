@@ -250,6 +250,12 @@ const FILE_ICON_PATH: &str = "bundled/svg/completion-file.svg";
 const FOLDER_ICON_PATH: &str = "bundled/svg/completion-folder.svg";
 const GIT_BRANCH_ICON_PATH: &str = "bundled/svg/completion-gitbranch.svg";
 
+/// Flex weights that give an item's text all but a sliver of the row before its description gets
+/// any space. The text has to be flexible because `Flex` lays out non-flexible children at an
+/// unbounded width, which would stop it from fading at the edge of the row.
+const ITEM_TEXT_FLEX: f32 = 1000.;
+const ITEM_DESCRIPTION_FLEX: f32 = 1.;
+
 const DETAILS_MIN_WIDTH: f32 = 180.;
 const DESCRIPTION_PANEL_WIDTH: f32 = 300.;
 pub const HISTORY_DETAILS_PANEL_WIDTH: f32 = 256.;
@@ -826,7 +832,7 @@ impl InputSuggestions {
                                 row.add_child(icon_container);
                             }
 
-                            row.add_child({
+                            let display_text = {
                                 let mut display_text = Text::new_inline(
                                     display_text_str,
                                     appearance.monospace_font_family(),
@@ -849,31 +855,32 @@ impl InputSuggestions {
                                         display_text.with_single_highlight(highlight, matches);
                                 }
                                 display_text.finish()
-                            });
+                            };
 
-                            if let Some(DetailContent::Description(desc)) = &item.details {
-                                row.add_child(
-                                    Shrinkable::new(
-                                        1.,
-                                        Container::new(
-                                            Text::new_inline(
-                                                desc.clone(),
-                                                appearance.ui_font_family(),
-                                                font_size,
-                                            )
-                                            .with_style(
-                                                Properties::default()
-                                                    .weight(appearance.monospace_font_weight()),
-                                            )
-                                            .with_color(description_text)
-                                            .finish(),
+                            let description = match &item.details {
+                                Some(DetailContent::Description(desc)) => Some(
+                                    Container::new(
+                                        Text::new_inline(
+                                            desc.clone(),
+                                            appearance.ui_font_family(),
+                                            font_size,
                                         )
-                                        .with_padding_left(DESCRIPTION_PADDING)
+                                        .with_style(
+                                            Properties::default()
+                                                .weight(appearance.monospace_font_weight()),
+                                        )
+                                        .with_color(description_text)
                                         .finish(),
                                     )
+                                    .with_padding_left(DESCRIPTION_PADDING)
                                     .finish(),
-                                );
-                            }
+                                ),
+                                Some(DetailContent::RichHistory(_))
+                                | Some(DetailContent::AIQueryHistory(_))
+                                | None => None,
+                            };
+
+                            add_item_text_to_row(&mut row, display_text, description);
 
                             if FeatureFlag::AllowIgnoringInputSuggestions.is_enabled()
                                 && item.is_history_item
@@ -1072,6 +1079,19 @@ impl InputSuggestions {
 
     pub fn set_path_separators(&mut self, path_separators: PathSeparators) {
         self.path_separators = path_separators;
+    }
+}
+
+/// Adds an item's text and optional description to `row`, shrinking the description first and
+/// fading the text only once it no longer fits in the row by itself.
+fn add_item_text_to_row(
+    row: &mut Flex,
+    text: Box<dyn Element>,
+    description: Option<Box<dyn Element>>,
+) {
+    row.add_child(Shrinkable::new(ITEM_TEXT_FLEX, text).finish());
+    if let Some(description) = description {
+        row.add_child(Shrinkable::new(ITEM_DESCRIPTION_FLEX, description).finish());
     }
 }
 
