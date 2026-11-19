@@ -277,6 +277,74 @@ pub fn java_signature() -> Signature {
     }
 }
 
+/// The `java` test signature with the shape of the real `java` spec: single-dash long
+/// flags, one-letter flags, and flags that cannot be combined (`-ver` is not `-v -e -r`).
+pub fn posix_noncompliant_java_signature(always_case_insensitive: bool) -> Signature {
+    Signature {
+        name: "java".to_string(),
+        alias_generator: None,
+        description: Some("Launch a java application".into()),
+        arguments: Some(vec![Argument {
+            display_name: Some("<mainclass>".to_string()),
+            description: None,
+            is_variadic: false,
+            is_command: false,
+            argument_types: vec![],
+            optional: IsArgumentOptional::Optional(None),
+            skip_generator_validation: false,
+        }]),
+        subcommands: None,
+        options: Some(vec![
+            Opt {
+                exact_string: vec!["-version".to_string(), "--version".to_string()],
+                description: Some("print product version to the error stream and exit".into()),
+                arguments: None,
+                required: false,
+                priority: Priority::default(),
+            },
+            Opt {
+                exact_string: vec![
+                    "-cp".to_string(),
+                    "-classpath".to_string(),
+                    "--class-path".to_string(),
+                ],
+                description: Some("class search path of directories and zip/jar files".to_string()),
+                arguments: Some(vec![Argument {
+                    display_name: Some("classpath".to_string()),
+                    description: None,
+                    is_variadic: false,
+                    is_command: false,
+                    argument_types: vec![],
+                    optional: IsArgumentOptional::Required,
+                    skip_generator_validation: false,
+                }]),
+                required: false,
+                priority: Priority::default(),
+            },
+            Opt {
+                exact_string: vec!["-D".to_string()],
+                description: Some("set a system property".to_string()),
+                arguments: None,
+                required: false,
+                priority: Priority::default(),
+            },
+            Opt {
+                exact_string: vec!["-h".to_string()],
+                description: Some("print help".to_string()),
+                arguments: None,
+                required: false,
+                priority: Priority::default(),
+            },
+        ]),
+        priority: Priority::default(),
+        parser_directives: ParserDirectives {
+            flags_are_posix_noncompliant: true,
+            flags_match_unique_prefix: false,
+            always_case_insensitive,
+        },
+    }
+}
+
 /// A signature with a single positional that has no argument types.
 pub fn signature_with_empty_positional() -> Signature {
     Signature {

@@ -4,11 +4,12 @@ use std::iter::FromIterator;
 use typed_path::TypedPathBuf;
 
 use super::{
-    CompleterOptions, CompletionsFallbackStrategy, SuggestionResults, SuggestionType, suggestions,
+    CompleterOptions, CompletionsFallbackStrategy, ExplicitTabCompletion, SuggestionResults,
+    SuggestionType, suggestions,
 };
 use crate::completer::context::CompletionContext;
 use crate::completer::engine::EngineDirEntry;
-use crate::completer::matchers::MatchStrategy;
+use crate::completer::matchers::{Match, MatchStrategy};
 use crate::completer::testing::{
     FakeCompletionContext, MockGeneratorContext, MockPathCompletionContext,
 };
@@ -17,7 +18,8 @@ use crate::signatures::CommandRegistry;
 use crate::signatures::testing::{
     add_content_signature, cd_signature, create_test_command_registry,
     enum_then_path_option_signature, fuzzy_signature, git_signature, java_signature, ls_signature,
-    npm_signature, signature_with_empty_positional, test_signature,
+    npm_signature, posix_noncompliant_java_signature, signature_with_empty_positional,
+    test_signature,
 };
 
 #[cfg(windows)]
@@ -226,6 +228,36 @@ fn complete_replacement_span_at_cursor_pos<T: CompletionContext>(
         ctx,
     )
     .map(|results| results.replacement_span)
+}
+
+fn results_at_end_of_line<T: CompletionContext>(line: &str, ctx: &T) -> Option<SuggestionResults> {
+    suggestions_for_test(
+        line,
+        line.len(),
+        CompleterOptions {
+            match_strategy: MatchStrategy::CaseInsensitive,
+            fallback_strategy: CompletionsFallbackStrategy::FilePaths,
+            suggest_file_path_completions_only: false,
+            parse_quotes_as_literals: false,
+        },
+        ctx,
+    )
+}
+
+/// Returns `(display, replacement)` for each suggestion at the end of `line`.
+fn completions_with_replacements<T: CompletionContext>(
+    line: &str,
+    ctx: &T,
+) -> Vec<(String, String)> {
+    results_at_end_of_line(line, ctx)
+        .into_iter()
+        .flat_map(|res| res.suggestions)
+        .map(|s| (s.display().to_string(), s.replacement().to_string()))
+        .collect()
+}
+
+fn display_and_replacement(display: &str, replacement: &str) -> (String, String) {
+    (display.to_string(), replacement.to_string())
 }
 
 #[test]
@@ -1930,6 +1962,99 @@ fn test_complete_long_hand_flags_single_dash() {
         complete_at_end_of_line_with_options("java -c", MatchStrategy::CaseInsensitive, &ctx),
         vec!["-classpath", "-cp"]
     );
+}
+
+#[test]
+fn test_posix_noncompliant_short_flags_are_not_combined() {
+    let registry = create_test_command_registry([posix_noncompliant_java_signature(false)]);
+    let ctx = FakeCompletionContext::new(registry);
+
+    // Accepting the suggestion replaces the whole partial flag.
+    assert_eq!(
+        complete_replacement_span("java -ver", &ctx),
+        Some(Span::new(5, 9))
+    );
+    assert_eq!(
+        completions_with_replacements("java -ver", &ctx),
+        vec![display_and_replacement("-version", "-version")]
+    );
+    assert_eq!(
+        completions_with_replacements("java -D", &ctx),
+        vec![display_and_replacement("-D", "-D")]
+    );
+    // `-Dfoo` does not combine `-D` with other short flags.
+    assert!(completions_with_replacements("java -Dfoo", &ctx).is_empty());
+    // Short flags match case-sensitively unless the signature is case-insensitive.
+    assert!(completions_with_replacements("java -d", &ctx).is_empty());
+
+    // A bare `-` still lists every flag.
+    assert_eq!(
+        complete_at_end_of_line_with_options("java -", MatchStrategy::CaseInsensitive, &ctx),
+        vec![
+            "-D",
+            "-h",
+            "--class-path",
+            "--version",
+            "-classpath",
+            "-cp",
+            "-version"
+        ]
+    );
+    // So does a trailing space, with long flags first.
+    assert_eq!(
+        complete_at_end_of_line_with_options("java ", MatchStrategy::CaseInsensitive, &ctx),
+        vec![
+            "--class-path",
+            "--version",
+            "-classpath",
+            "-cp",
+            "-version",
+            "-D",
+            "-h"
+        ]
+    );
+}
+
+#[test]
+fn test_posix_noncompliant_short_flags_case_insensitive() {
+    let registry = create_test_command_registry([posix_noncompliant_java_signature(true)]);
+    let ctx = FakeCompletionContext::new(registry);
+
+    // `-d` names `-D`, and accepting it inserts the flag's own spelling.
+    assert_eq!(
+        completions_with_replacements("java -d", &ctx),
+        vec![display_and_replacement("-D", "-D")]
+    );
+    assert_eq!(
+        completions_with_replacements("java -VER", &ctx),
+        vec![display_and_replacement("-version", "-version")]
+    );
+
+    let results = results_at_end_of_line("java -D", &ctx).expect("suggestions for `java -D`");
+    assert!(matches!(
+        results.suggestions[0].match_type,
+        Match::Prefix {
+            is_case_sensitive: true
+        }
+    ));
+
+    let results = results_at_end_of_line("java -d", &ctx).expect("suggestions for `java -d`");
+    assert!(matches!(
+        results.suggestions[0].match_type,
+        Match::Prefix {
+            is_case_sensitive: false
+        }
+    ));
+    // Tab replaces `-d` with `-D`.
+    let ExplicitTabCompletion::InsertSingle {
+        suggestion,
+        replacement_span,
+    } = results.explicit_tab_completion("-d", &['/'])
+    else {
+        panic!("`-D` should be inserted");
+    };
+    assert_eq!(suggestion.suggestion.replacement, "-D");
+    assert_eq!(replacement_span, Span::new(5, 7));
 }
 
 #[test]
