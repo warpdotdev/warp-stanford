@@ -4771,6 +4771,12 @@ impl AppContext {
             .and_then(|window| window.focused_view)
     }
 
+    /// Asks the platform to discard any in-progress IME composition in the window, as happens
+    /// automatically when focus moves between views.
+    pub fn discard_ime_composition(&self, window_id: WindowId) {
+        self.platform_delegate.close_ime_async(window_id);
+    }
+
     pub fn view_name(&self, window_id: WindowId, view_id: EntityId) -> Option<&str> {
         self.windows
             .get(&window_id)
