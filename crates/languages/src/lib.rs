@@ -18,7 +18,7 @@ lazy_static! {
     static ref LANGUAGE_REGISTRY: LanguageRegistry = LanguageRegistry::new();
 }
 
-pub const SUPPORTED_LANGUAGES: [&str; 35] = [
+pub const SUPPORTED_LANGUAGES: [&str; 36] = [
     "rust",
     "golang",
     "yaml",
@@ -51,6 +51,7 @@ pub const SUPPORTED_LANGUAGES: [&str; 35] = [
     "objective-c",
     "xml",
     "vue",
+    "svelte",
     "dockerfile",
     "nix",
     "markdown",
@@ -194,6 +195,7 @@ fn language_by_filename_parts(
         "m" | "mm" => language_by_name("objective-c"),
         "xml" => language_by_name("xml"),
         "vue" => language_by_name("vue"),
+        "svelte" => language_by_name("svelte"),
         "dockerfile" => language_by_name("dockerfile"),
         "md" | "markdown" => language_by_name("markdown"),
         _ => None,
@@ -292,6 +294,7 @@ fn get_arborium_highlight_query(lang: &str) -> Option<&str> {
         "objective-c" => Some(&arborium::lang_objc::HIGHLIGHTS_QUERY),
         "xml" => Some(arborium::lang_xml::HIGHLIGHTS_QUERY),
         "vue" => Some(&arborium::lang_vue::HIGHLIGHTS_QUERY),
+        "svelte" => Some(&arborium::lang_svelte::HIGHLIGHTS_QUERY),
         "dockerfile" => Some(arborium::lang_dockerfile::HIGHLIGHTS_QUERY),
         "markdown" => Some(arborium::lang_markdown::HIGHLIGHTS_QUERY),
         _ => None,

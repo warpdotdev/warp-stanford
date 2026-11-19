@@ -335,6 +335,7 @@ arborium = { version = "2", default-features = false, features = [
   "lang-objc",
   "lang-xml",
   "lang-vue",
+  "lang-svelte",
   "lang-dockerfile",
   "lang-markdown",
 ] }

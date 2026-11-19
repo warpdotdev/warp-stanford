@@ -141,6 +141,13 @@ pub fn icon_from_file_path(path: &str, appearance: &Appearance) -> Option<Box<dy
             CacheOption::BySize,
         )
         .finish(),
+        Some("svelte") => Image::new(
+            AssetSource::Bundled {
+                path: "bundled/svg/file_type/svelte.svg",
+            },
+            CacheOption::BySize,
+        )
+        .finish(),
         Some("tf") | Some("hcl") | Some("tfvars") => Image::new(
             AssetSource::Bundled {
                 path: "bundled/svg/file_type/terraform.svg",
