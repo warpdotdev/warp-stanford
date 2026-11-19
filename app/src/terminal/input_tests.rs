@@ -610,6 +610,41 @@ fn file_suggestion(path: impl Into<SmolStr>) -> MatchedSuggestion {
     )
 }
 
+/// Creates a path [`MatchedSuggestion`] the way the completer returns it after an opening single
+/// quote: the display text is the bare name, a file replacement closes the quote, and a directory
+/// replacement keeps it open.
+fn quoted_path_suggestion(name: &str, file_type: EngineFileType) -> MatchedSuggestion {
+    let replacement = match file_type {
+        EngineFileType::File => format!("'{name}'"),
+        EngineFileType::Directory => format!("'{name}"),
+    };
+    let suggestion = Suggestion::new(
+        name,
+        replacement,
+        None,
+        SuggestionType::Argument,
+        Priority::default(),
+    )
+    .with_file_type(file_type);
+
+    MatchedSuggestion::new(
+        suggestion,
+        Match::Prefix {
+            is_case_sensitive: true,
+        },
+    )
+}
+
+fn type_before_closing_quote(input: &mut Input, ctx: &mut ViewContext<Input>) {
+    input.clear_buffer_and_reset_undo_stack(ctx);
+    let line = "ls 'one'";
+    input.user_insert(line, ctx);
+    let cursor = ByteOffset::from(line.len() - 1);
+    input.editor.update(ctx, |editor, ctx| {
+        editor.select_ranges_by_byte_offset([cursor..cursor], ctx);
+    });
+}
+
 fn case_insensitive_argument_suggestion(name: impl Into<SmolStr>) -> MatchedSuggestion {
     let suggestion = Suggestion::with_same_display_and_replacement(
         name,
@@ -4375,6 +4410,65 @@ fn test_tab_completion_with_leading_space() {
 }
 
 #[test]
+fn test_tab_completion_before_auto_closed_quote() {
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        let terminal = add_window_with_bootstrapped_terminal(&mut app, None, None).await;
+        let input = terminal.read(&app, |terminal, _| terminal.input().clone());
+
+        input.update(&mut app, |input, ctx| {
+            type_before_closing_quote(input, ctx);
+            input.input_tab(ctx);
+            input.handle_completion_suggestions_results(
+                build_suggestion_results(
+                    vec![quoted_path_suggestion("one two", EngineFileType::File)],
+                    (3, 7),
+                    MatchStrategy::CaseInsensitive,
+                ),
+                CompletionsTrigger::Keybinding,
+                editor_model_snapshot(input, ctx),
+                ctx,
+            );
+        });
+        input.read(&app, |input, ctx| {
+            assert_eq!(input.buffer_text(ctx), "ls 'one two' ");
+        });
+
+        // A common prefix leaves the quote open, so the closing quote stays.
+        input.update(&mut app, |input, ctx| {
+            type_before_closing_quote(input, ctx);
+            input.input_tab(ctx);
+            input.handle_completion_suggestions_results(
+                build_suggestion_results(
+                    vec![
+                        quoted_path_suggestion("one two", EngineFileType::File),
+                        quoted_path_suggestion("one three", EngineFileType::File),
+                    ],
+                    (3, 7),
+                    MatchStrategy::CaseInsensitive,
+                ),
+                CompletionsTrigger::Keybinding,
+                editor_model_snapshot(input, ctx),
+                ctx,
+            );
+        });
+        input.read(&app, |input, ctx| {
+            assert_eq!(input.buffer_text(ctx), "ls 'one t'");
+        });
+
+        // Confirming a file from the open menu consumes the closing quote.
+        input.update(&mut app, |input, ctx| {
+            input
+                .input_suggestions
+                .update(ctx, |suggestions, ctx| suggestions.confirm(ctx));
+        });
+        input.read(&app, |input, ctx| {
+            assert_eq!(input.buffer_text(ctx), "ls 'one two' ");
+        });
+    });
+}
+
+#[test]
 fn test_tab_completion_with_spaces() {
     App::test((), |mut app| async move {
         initialize_app(&mut app);
@@ -6670,6 +6764,7 @@ fn test_cursor_movement() {
             },
             trigger: CompletionsTrigger::Keybinding,
             menu_position: TabCompletionsMenuPosition::AtLastCursor,
+            auto_closed_quote: None,
         };
         input.read(&app, |input, ctx| {
             assert_eq!(input.buffer_text(ctx), "cd Do");
@@ -8331,6 +8426,56 @@ fn test_classic_tab_completions_keep_menu_open_while_cycling() {
             );
         });
     })
+}
+
+#[test]
+fn test_classic_cycling_keeps_auto_closed_quote() {
+    let _flag = FeatureFlag::ClassicCompletions.override_enabled(true);
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        let terminal = add_window_with_bootstrapped_terminal(&mut app, None, None).await;
+        let input = terminal.read(&app, |terminal, _| terminal.input().clone());
+
+        app.update(|ctx| {
+            InputSettings::handle(ctx).update(ctx, |setting, ctx| {
+                setting
+                    .classic_completions_mode
+                    .toggle_and_save_value(ctx)
+                    .expect("Able to turn on classic completions");
+            })
+        });
+
+        input.update(&mut app, |input, ctx| {
+            type_before_closing_quote(input, ctx);
+            input.input_tab(ctx);
+            input.handle_completion_suggestions_results(
+                build_suggestion_results(
+                    vec![
+                        quoted_path_suggestion("one two", EngineFileType::File),
+                        quoted_path_suggestion("one dir/", EngineFileType::Directory),
+                    ],
+                    (3, 7),
+                    MatchStrategy::CaseInsensitive,
+                ),
+                CompletionsTrigger::Keybinding,
+                editor_model_snapshot(input, ctx),
+                ctx,
+            );
+        });
+
+        input.update(&mut app, |input, ctx| input.input_tab(ctx));
+        input.read(&app, |input, ctx| {
+            assert_eq!(input.buffer_text(ctx), "ls 'one two'");
+        });
+        input.update(&mut app, |input, ctx| input.input_tab(ctx));
+        input.read(&app, |input, ctx| {
+            assert_eq!(input.buffer_text(ctx), "ls 'one dir/'");
+        });
+        input.update(&mut app, |input, ctx| input.input_tab(ctx));
+        input.read(&app, |input, ctx| {
+            assert_eq!(input.buffer_text(ctx), "ls 'one two'");
+        });
+    });
 }
 
 #[test]

@@ -33,6 +33,7 @@ use warp::tui_export::{
     AcceptSlashCommandOrSavedPrompt, BlocklistAIInputModel, InputType,
     InputTypeAutoDetectionSource, LLMId, TuiMcpAction, TuiUpArrowHistoryItemKind,
 };
+use warp_completer::completer::completion_replacement_end;
 use warp_editor::model::CoreEditorModel;
 use warpui::SingletonEntity as _;
 use warpui_core::elements::MouseStateHandle;
@@ -1161,14 +1162,23 @@ impl TuiInputView {
         else {
             return false;
         };
+        let replacement_end_byte = completion_replacement_end(
+            &buffer_text,
+            replacement_range.start,
+            replacement_range.end,
+            &acceptance.replacement,
+        );
         let Some(replacement_end) =
-            count_chars_up_to_byte(&buffer_text, ByteOffset::from(replacement_range.end))
+            count_chars_up_to_byte(&buffer_text, ByteOffset::from(replacement_end_byte))
         else {
             return false;
         };
         let selection_range = replacement_start + 1..replacement_end + 1;
+        // Consuming the closing quote can move the replacement to the end of the buffer.
+        let closes_last_quote = replacement_end_byte > replacement_range.end
+            && replacement_end_byte == buffer_text.len();
         let mut replacement = acceptance.replacement;
-        if acceptance.append_space {
+        if acceptance.append_space || closes_last_quote {
             replacement.push(' ');
         }
         self.model.update(ctx, |model, ctx| {

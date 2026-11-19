@@ -19,7 +19,7 @@ pub use matchers::{Match, MatchStrategy, MatchType};
 pub use suggest::{
     CompleterOptions, CompletionsFallbackStrategy, ExplicitTabCompletion, MatchedSuggestion,
     PreparedSuggestion, Priority, Suggestion, SuggestionResults, SuggestionType,
-    SuggestionTypeName, suggestions,
+    SuggestionTypeName, completion_replacement_end, quote_closed_after_cursor, suggestions,
 };
 
 fn get_path_separators(ctx: &dyn CompletionContext) -> PathSeparators {

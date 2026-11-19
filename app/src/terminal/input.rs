@@ -62,7 +62,7 @@ use warp_cli::agent::Harness;
 use warp_completer::completer::{
     self, CompleterOptions, CompletionContext, CompletionsFallbackStrategy, Description,
     ExplicitTabCompletion, MatchStrategy, MatchType, PathSeparators, PreparedSuggestion,
-    SuggestionResults,
+    SuggestionResults, completion_replacement_end, quote_closed_after_cursor,
 };
 use warp_completer::meta::{HasSpan, Span, Spanned};
 use warp_completer::parsers::LiteCommand;
@@ -679,6 +679,10 @@ pub enum InputSuggestionsMode {
 
         /// Where the menu should be positioned.
         menu_position: TabCompletionsMenuPosition,
+
+        /// The quote that closed the replaced token right after the cursor when the menu opened.
+        /// Cycling to a closed suggestion consumes it, so the next cycle step must give it back.
+        auto_closed_quote: Option<char>,
     },
 
     StaticWorkflowEnumSuggestions {
@@ -9133,13 +9137,32 @@ impl Input {
                         });
                     }
                     InputSuggestionsMode::CompletionSuggestions {
-                        replacement_start, ..
+                        replacement_start,
+                        auto_closed_quote,
+                        ..
                     } => {
                         let replacement_start = *replacement_start;
+                        let auto_closed_quote = *auto_closed_quote;
                         if self.is_classic_completions_enabled(ctx) {
                             self.editor.update(ctx, |editor, ctx| {
+                                let buffer_text = editor.buffer_text(ctx);
+                                let mut cursor_end =
+                                    editor.end_byte_index_of_last_selection(ctx).as_usize();
+                                if let Some(quote) = auto_closed_quote
+                                    && cursor_end > replacement_start + 1
+                                    && buffer_text
+                                        .get(replacement_start..cursor_end)
+                                        .is_some_and(|token| token.ends_with(quote))
+                                {
+                                    cursor_end -= 1;
+                                }
                                 let cursor_end_offset =
-                                    editor.end_byte_index_of_last_selection(ctx);
+                                    ByteOffset::from(completion_replacement_end(
+                                        &buffer_text,
+                                        replacement_start,
+                                        cursor_end,
+                                        selected_item.text(),
+                                    ));
                                 editor.select_and_replace(
                                     selected_item.text(),
                                     [ByteOffset::from(replacement_start)..cursor_end_offset],
@@ -13290,6 +13313,12 @@ impl Input {
                     TabCompletionsMenuPosition::AtLastCursor
                 };
 
+                let editor = self.editor.as_ref(ctx);
+                let auto_closed_quote = quote_closed_after_cursor(
+                    &editor.buffer_text(ctx),
+                    results.replacement_span.start(),
+                    editor.end_byte_index_of_last_selection(ctx).as_usize(),
+                );
                 self.suggestions_mode_model.update(ctx, |model, ctx| {
                     model.set_mode(
                         InputSuggestionsMode::CompletionSuggestions {
@@ -13298,6 +13327,7 @@ impl Input {
                             completion_results: results.clone(),
                             trigger: completions_trigger,
                             menu_position,
+                            auto_closed_quote,
                         },
                         ctx,
                     );
@@ -13332,7 +13362,12 @@ impl Input {
     ) {
         let completion_prefix = strip_control_characters(completion_prefix);
         self.editor.update(ctx, |input, ctx| {
-            let cursor_end_offset = input.end_byte_index_of_last_selection(ctx);
+            let cursor_end_offset = ByteOffset::from(completion_replacement_end(
+                &input.buffer_text(ctx),
+                replacement_start,
+                input.end_byte_index_of_last_selection(ctx).as_usize(),
+                &completion_prefix,
+            ));
             input.select_and_replace(
                 &completion_prefix,
                 [ByteOffset::from(replacement_start)..cursor_end_offset],
@@ -13353,7 +13388,13 @@ impl Input {
         let completion_result = strip_control_characters(completion_result);
         let is_completions_as_you_type_enabled = self.is_completions_while_typing_turned_on(ctx);
         self.editor.update(ctx, |input, ctx| {
-            let cursor_end_offset = input.end_byte_index_of_last_selection(ctx);
+            let buffer_text = input.buffer_text(ctx);
+            let cursor_end_offset = ByteOffset::from(completion_replacement_end(
+                &buffer_text,
+                replacement_start,
+                input.end_byte_index_of_last_selection(ctx).as_usize(),
+                &completion_result,
+            ));
 
             // Add a space to the end if the end of the selection/replacement is at the end of the
             // buffer and the completion result doesn't end with a slash or an equals sign. A
@@ -13364,7 +13405,7 @@ impl Input {
             let is_classic_completions_enabled = self.is_classic_completions_enabled(ctx);
             let replacement: Cow<str> = if (!is_completions_as_you_type_enabled
                 || is_classic_completions_enabled)
-                && cursor_end_offset.as_usize() == input.buffer_text(ctx).len()
+                && cursor_end_offset.as_usize() == buffer_text.len()
                 && !completion_result.ends_with(self.path_separators(ctx).main)
                 && !completion_result.ends_with('=')
                 && executing == Executing::No

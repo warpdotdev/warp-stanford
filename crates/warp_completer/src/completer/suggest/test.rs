@@ -2,9 +2,11 @@ use std::collections::{HashMap, HashSet};
 use std::iter::FromIterator;
 
 use typed_path::TypedPathBuf;
+use warp_util::path::ShellFamily;
 
 use super::{
-    CompleterOptions, CompletionsFallbackStrategy, SuggestionResults, SuggestionType, suggestions,
+    CompleterOptions, CompletionsFallbackStrategy, ExplicitTabCompletion, SuggestionResults,
+    SuggestionType, completion_replacement_end, suggestions,
 };
 use crate::completer::context::CompletionContext;
 use crate::completer::engine::EngineDirEntry;
@@ -2382,5 +2384,477 @@ fn test_powershell_parser_directives_for_case_insensitivity() {
             &ctx
         ),
         vec!["-Force"]
+    );
+}
+
+/// Runs the completer at `pos` and filters by the replacement span text, as the input view does on
+/// Tab. Returns `(display, replacement)` pairs.
+fn tab_completions_at_cursor<T: CompletionContext>(
+    line: &str,
+    pos: usize,
+    file_paths_only: bool,
+    ctx: &T,
+) -> Vec<(String, String)> {
+    let Some(results) = suggestions_for_test(
+        line,
+        pos,
+        CompleterOptions {
+            match_strategy: MatchStrategy::CaseInsensitive,
+            fallback_strategy: CompletionsFallbackStrategy::FilePaths,
+            suggest_file_path_completions_only: file_paths_only,
+            parse_quotes_as_literals: false,
+        },
+        ctx,
+    ) else {
+        return vec![];
+    };
+    let query = results.replacement_span.slice(line);
+    results
+        .filter_by_query(query, &['/'])
+        .map(|s| {
+            (
+                s.suggestion.display.to_string(),
+                s.suggestion.replacement.to_string(),
+            )
+        })
+        .collect()
+}
+
+fn quoted_path_ctx() -> FakeCompletionContext {
+    let pwd = TypedPathBuf::from(TEST_WORK_DIR);
+    let path_ctx = MockPathCompletionContext::new(pwd.clone())
+        .with_entries(pwd.join("dir one/"), [EngineDirEntry::test_file("file")])
+        .with_entries_in_pwd([
+            EngineDirEntry::test_file("one two"),
+            EngineDirEntry::test_dir("dir one"),
+            EngineDirEntry::test_file("it's here"),
+            EngineDirEntry::test_file("cost $5"),
+            EngineDirEntry::test_file(r"back\slash"),
+            EngineDirEntry::test_file("école x"),
+        ]);
+    FakeCompletionContext::new(create_test_command_registry([ls_signature()]))
+        .with_path_completion_context(path_ctx)
+}
+
+#[test]
+fn test_path_completion_keeps_opening_quote() {
+    let ctx = quoted_path_ctx();
+    let line = "ls 'one";
+    assert_eq!(
+        tab_completions_at_cursor(line, line.len(), false, &ctx),
+        vec![("one two".to_owned(), "'one two'".to_owned())],
+    );
+    let line = "ls \"one";
+    assert_eq!(
+        tab_completions_at_cursor(line, line.len(), false, &ctx),
+        vec![("one two".to_owned(), "\"one two\"".to_owned())],
+    );
+}
+
+#[test]
+fn test_file_path_only_completion_keeps_opening_quote() {
+    let ctx = quoted_path_ctx();
+    let line = "ls 'one";
+    assert_eq!(
+        tab_completions_at_cursor(line, line.len(), true, &ctx),
+        vec![("one two".to_owned(), "'one two'".to_owned())],
+    );
+    let line = "ls \"one";
+    assert_eq!(
+        tab_completions_at_cursor(line, line.len(), true, &ctx),
+        vec![("one two".to_owned(), "\"one two\"".to_owned())],
+    );
+}
+
+#[test]
+fn test_path_completion_before_auto_closed_quote() {
+    let ctx = quoted_path_ctx();
+    // The editor auto-closes the quote, so the cursor sits before it.
+    let line = "ls 'one'";
+    assert_eq!(
+        tab_completions_at_cursor(line, line.len() - 1, false, &ctx),
+        vec![("one two".to_owned(), "'one two'".to_owned())],
+    );
+    let line = "ls \"one\"";
+    assert_eq!(
+        tab_completions_at_cursor(line, line.len() - 1, false, &ctx),
+        vec![("one two".to_owned(), "\"one two\"".to_owned())],
+    );
+}
+
+#[test]
+fn test_quoted_completion_with_multibyte_name() {
+    let ctx = quoted_path_ctx();
+    let line = "ls 'éc'";
+    let cursor = line.len() - 1;
+    assert_eq!(
+        tab_completions_at_cursor(line, cursor, false, &ctx),
+        vec![("école x".to_owned(), "'école x'".to_owned())],
+    );
+    assert_eq!(
+        completion_replacement_end(line, 3, cursor, "'école x'"),
+        line.len(),
+    );
+}
+
+#[test]
+fn test_quoted_directory_completion_leaves_quote_open() {
+    let ctx = quoted_path_ctx();
+    let line = "ls 'dir";
+    assert_eq!(
+        tab_completions_at_cursor(line, line.len(), false, &ctx),
+        vec![("dir one/".to_owned(), "'dir one/".to_owned())],
+    );
+    let line = "ls 'dir one/fi";
+    assert_eq!(
+        tab_completions_at_cursor(line, line.len(), false, &ctx),
+        vec![("file".to_owned(), "'dir one/file'".to_owned())],
+    );
+}
+
+#[test]
+fn test_quoted_completion_common_prefix_keeps_opening_quote() {
+    let path_ctx = MockPathCompletionContext::new(TypedPathBuf::from(TEST_WORK_DIR))
+        .with_entries_in_pwd([
+            EngineDirEntry::test_file("one two"),
+            EngineDirEntry::test_file("one three"),
+        ]);
+    let ctx = FakeCompletionContext::new(create_test_command_registry([ls_signature()]))
+        .with_path_completion_context(path_ctx);
+    let line = "ls 'one";
+    let results = suggestions_for_test(
+        line,
+        line.len(),
+        CompleterOptions {
+            match_strategy: MatchStrategy::CaseInsensitive,
+            fallback_strategy: CompletionsFallbackStrategy::FilePaths,
+            suggest_file_path_completions_only: false,
+            parse_quotes_as_literals: false,
+        },
+        &ctx,
+    )
+    .expect("suggestion results should be some");
+    let query = results.replacement_span.slice(line);
+    let ExplicitTabCompletion::InsertCommonPrefixAndOpen { common_prefix, .. } =
+        results.explicit_tab_completion(query, &['/'])
+    else {
+        panic!("expected a common prefix to insert");
+    };
+    assert_eq!(common_prefix, "'one t");
+}
+
+#[test]
+fn test_quoted_completion_skips_names_the_quote_cannot_hold() {
+    let ctx = quoted_path_ctx();
+    // These names keep their escaped replacement, which does not match the quoted query.
+    let line = "ls 'it";
+    assert_eq!(
+        tab_completions_at_cursor(line, line.len(), false, &ctx),
+        vec![],
+    );
+    let line = "ls \"cost";
+    assert_eq!(
+        tab_completions_at_cursor(line, line.len(), false, &ctx),
+        vec![],
+    );
+    let line = "ls 'back";
+    assert_eq!(
+        tab_completions_at_cursor(line, line.len(), false, &ctx),
+        vec![],
+    );
+}
+
+#[test]
+fn test_single_quote_holds_dollar_sign() {
+    let ctx = quoted_path_ctx();
+    let line = "ls 'cost";
+    assert_eq!(
+        tab_completions_at_cursor(line, line.len(), false, &ctx),
+        vec![("cost $5".to_owned(), "'cost $5'".to_owned())],
+    );
+}
+
+#[test]
+fn test_quoted_completion_skips_home_directory_paths() {
+    let pwd = TypedPathBuf::from(TEST_WORK_DIR);
+    let path_ctx = MockPathCompletionContext::new(pwd)
+        .with_home_directory(TEST_WORK_DIR.to_owned())
+        .with_entries_in_pwd([EngineDirEntry::test_file("one two")]);
+    let ctx = FakeCompletionContext::new(create_test_command_registry([ls_signature()]))
+        .with_path_completion_context(path_ctx);
+    let line = "ls '~/one";
+    assert_eq!(
+        tab_completions_at_cursor(line, line.len(), false, &ctx),
+        vec![],
+    );
+    let line = "ls '$HOME/one";
+    assert_eq!(
+        tab_completions_at_cursor(line, line.len(), false, &ctx),
+        vec![],
+    );
+}
+
+#[test]
+fn test_unquoted_path_completion_is_unchanged() {
+    let ctx = quoted_path_ctx();
+    let line = "ls one";
+    assert_eq!(
+        tab_completions_at_cursor(line, line.len(), false, &ctx),
+        vec![("one two".to_owned(), r"one\ two".to_owned())],
+    );
+}
+
+fn powershell_path_ctx(entries: impl IntoIterator<Item = EngineDirEntry>) -> FakeCompletionContext {
+    let pwd = TypedPathBuf::from(TEST_WORK_DIR);
+    let path_ctx = MockPathCompletionContext::new(pwd.clone())
+        .with_shell_family(ShellFamily::PowerShell)
+        .with_entries(pwd.join("dir one/"), [EngineDirEntry::test_file("file")])
+        .with_entries_in_pwd(entries);
+    FakeCompletionContext::new(create_test_command_registry([ls_signature()]))
+        .with_shell_family(ShellFamily::PowerShell)
+        .with_path_completion_context(path_ctx)
+}
+
+fn powershell_quoted_path_ctx() -> FakeCompletionContext {
+    powershell_path_ctx([
+        EngineDirEntry::test_file("one two"),
+        EngineDirEntry::test_dir("dir one"),
+    ])
+}
+
+#[test]
+fn test_powershell_path_completion_keeps_opening_quote() {
+    let ctx = powershell_quoted_path_ctx();
+    let line = "ls 'one";
+    assert_eq!(
+        tab_completions_at_cursor(line, line.len(), false, &ctx),
+        vec![("one two".to_owned(), "'one two'".to_owned())],
+    );
+    let line = "ls \"one";
+    assert_eq!(
+        tab_completions_at_cursor(line, line.len(), false, &ctx),
+        vec![("one two".to_owned(), "\"one two\"".to_owned())],
+    );
+}
+
+#[test]
+fn test_powershell_quoted_directory_completion_leaves_quote_open() {
+    let ctx = powershell_quoted_path_ctx();
+    let line = "ls 'dir";
+    assert_eq!(
+        tab_completions_at_cursor(line, line.len(), false, &ctx),
+        vec![("dir one/".to_owned(), "'dir one/".to_owned())],
+    );
+    let line = "ls 'dir one/fi";
+    assert_eq!(
+        tab_completions_at_cursor(line, line.len(), false, &ctx),
+        vec![("file".to_owned(), "'dir one/file'".to_owned())],
+    );
+}
+
+#[test]
+fn test_powershell_file_path_only_completion_keeps_opening_quote() {
+    let ctx = powershell_quoted_path_ctx();
+    let line = "ls 'one";
+    assert_eq!(
+        tab_completions_at_cursor(line, line.len(), true, &ctx),
+        vec![("one two".to_owned(), "'one two'".to_owned())],
+    );
+    let line = "ls \"one";
+    assert_eq!(
+        tab_completions_at_cursor(line, line.len(), true, &ctx),
+        vec![("one two".to_owned(), "\"one two\"".to_owned())],
+    );
+}
+
+fn powershell_completions(name: &str, quote: char) -> Vec<(String, String)> {
+    let ctx = powershell_path_ctx([EngineDirEntry::test_file(name)]);
+    let line = format!("ls {quote}a");
+    tab_completions_at_cursor(&line, line.len(), false, &ctx)
+}
+
+fn quoted_completion(name: &str, quote: char) -> Vec<(String, String)> {
+    vec![(name.to_owned(), format!("{quote}{name}{quote}"))]
+}
+
+#[test]
+fn test_powershell_single_quote_skips_names_with_single_quotes() {
+    let names = [
+        "a'b",
+        "a\u{2018}b",
+        "a\u{2019}b",
+        "a\u{201A}b",
+        "a\u{201B}b",
+    ];
+    assert_eq!(
+        names.map(|name| powershell_completions(name, '\'')),
+        names.map(|_| vec![]),
+    );
+}
+
+#[test]
+fn test_powershell_double_quote_skips_names_with_special_chars() {
+    let names = [
+        "a\"b",
+        "a$b",
+        "a`b",
+        "a\u{201C}b",
+        "a\u{201D}b",
+        "a\u{201E}b",
+    ];
+    assert_eq!(
+        names.map(|name| powershell_completions(name, '"')),
+        names.map(|_| vec![]),
+    );
+}
+
+#[test]
+fn test_powershell_quotes_hold_other_special_chars() {
+    // Backslash and `!` are plain characters in both PowerShell quote kinds.
+    let single_holds = [
+        "a\"b",
+        "a$b",
+        "a`b",
+        "a\u{201C}b",
+        "a\u{201D}b",
+        "a\u{201E}b",
+        r"a\b",
+        "a!b",
+    ];
+    assert_eq!(
+        single_holds.map(|name| powershell_completions(name, '\'')),
+        single_holds.map(|name| quoted_completion(name, '\'')),
+    );
+    let double_holds = [
+        "a'b",
+        "a\u{2018}b",
+        "a\u{2019}b",
+        "a\u{201A}b",
+        "a\u{201B}b",
+        r"a\b",
+        "a!b",
+    ];
+    assert_eq!(
+        double_holds.map(|name| powershell_completions(name, '"')),
+        double_holds.map(|name| quoted_completion(name, '"')),
+    );
+}
+
+fn posix_completions(name: &str, quote: char) -> Vec<(String, String)> {
+    let path_ctx = MockPathCompletionContext::new(TypedPathBuf::from(TEST_WORK_DIR))
+        .with_entries_in_pwd([EngineDirEntry::test_file(name)]);
+    let ctx = FakeCompletionContext::new(create_test_command_registry([ls_signature()]))
+        .with_path_completion_context(path_ctx);
+    let line = format!("ls {quote}a");
+    tab_completions_at_cursor(&line, line.len(), false, &ctx)
+}
+
+#[test]
+fn test_posix_single_quote_skips_names_with_special_chars() {
+    let names = ["a'b", r"a\b"];
+    assert_eq!(
+        names.map(|name| posix_completions(name, '\'')),
+        names.map(|_| vec![]),
+    );
+}
+
+#[test]
+fn test_posix_double_quote_skips_names_with_special_chars() {
+    let names = ["a\"b", "a$b", "a`b", r"a\b", "a!b"];
+    assert_eq!(
+        names.map(|name| posix_completions(name, '"')),
+        names.map(|_| vec![]),
+    );
+}
+
+#[test]
+fn test_posix_quotes_hold_other_special_chars() {
+    let single_holds = ["a\"b", "a$b", "a`b", "a!b"];
+    assert_eq!(
+        single_holds.map(|name| posix_completions(name, '\'')),
+        single_holds.map(|name| quoted_completion(name, '\'')),
+    );
+    let double_holds = ["a'b"];
+    assert_eq!(
+        double_holds.map(|name| posix_completions(name, '"')),
+        double_holds.map(|name| quoted_completion(name, '"')),
+    );
+}
+
+#[test]
+fn test_powershell_unquoted_path_completion_is_unchanged() {
+    let ctx = powershell_quoted_path_ctx();
+    let line = "ls one";
+    assert_eq!(
+        tab_completions_at_cursor(line, line.len(), false, &ctx),
+        vec![("one two".to_owned(), "one` two".to_owned())],
+    );
+}
+
+#[test]
+fn test_completion_replacement_end_consumes_closing_quote() {
+    let buffer = "ls 'one tw'";
+    assert_eq!(
+        completion_replacement_end(buffer, 3, buffer.len() - 1, "'one two'"),
+        buffer.len(),
+    );
+    let buffer = "ls \"one tw\"";
+    assert_eq!(
+        completion_replacement_end(buffer, 3, buffer.len() - 1, "\"one two\""),
+        buffer.len(),
+    );
+}
+
+#[test]
+fn test_completion_replacement_end_keeps_closing_quote_for_open_insertions() {
+    let buffer = "ls 'one tw'";
+    let cursor = buffer.len() - 1;
+    assert_eq!(
+        completion_replacement_end(buffer, 3, cursor, "'one t"),
+        cursor,
+    );
+    assert_eq!(
+        completion_replacement_end(buffer, 3, cursor, "'dir one/"),
+        cursor,
+    );
+    assert_eq!(completion_replacement_end(buffer, 3, cursor, "'"), cursor);
+    let buffer = "ls \"one tw\"";
+    let cursor = buffer.len() - 1;
+    assert_eq!(
+        completion_replacement_end(buffer, 3, cursor, "\"one t"),
+        cursor,
+    );
+    assert_eq!(
+        completion_replacement_end(buffer, 3, cursor, "\"dir one/"),
+        cursor,
+    );
+    assert_eq!(completion_replacement_end(buffer, 3, cursor, "\""), cursor);
+}
+
+#[test]
+fn test_completion_replacement_end_ignores_other_tokens() {
+    // The replaced token already closes its quote.
+    let buffer = "ls 'one two''";
+    assert_eq!(
+        completion_replacement_end(buffer, 3, buffer.len() - 1, "'one two'"),
+        buffer.len() - 1,
+    );
+    // No quote follows the cursor.
+    let buffer = "ls 'one";
+    assert_eq!(
+        completion_replacement_end(buffer, 3, buffer.len(), "'one two'"),
+        buffer.len(),
+    );
+    // The token does not open a quote.
+    let buffer = "ls one'";
+    assert_eq!(
+        completion_replacement_end(buffer, 3, buffer.len() - 1, "'one two'"),
+        buffer.len() - 1,
+    );
+    // A different quote follows the cursor.
+    let buffer = "ls 'one\"";
+    assert_eq!(
+        completion_replacement_end(buffer, 3, buffer.len() - 1, "'one two'"),
+        buffer.len() - 1,
     );
 }
