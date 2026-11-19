@@ -155,6 +155,7 @@ struct LspServerRowMouseStates {
 struct InitializedFoldersMouseStates {
     codebase_manual_resync: Vec<MouseStateHandle>,
     codebase_delete: Vec<MouseStateHandle>,
+    remove_lsp_folder: Vec<MouseStateHandle>,
     #[cfg(not(target_family = "wasm"))]
     remote_codebase_manual_resync: Vec<MouseStateHandle>,
     #[cfg(not(target_family = "wasm"))]
@@ -186,6 +187,7 @@ pub struct CodeIndexingPageView {
     window_id: WindowId,
     codebase_manual_resync_mouse_states: Vec<MouseStateHandle>,
     codebase_delete_mouse_states: Vec<MouseStateHandle>,
+    remove_lsp_folder_mouse_states: Vec<MouseStateHandle>,
     #[cfg(not(target_family = "wasm"))]
     remote_codebase_manual_resync_mouse_states: Vec<MouseStateHandle>,
     #[cfg(not(target_family = "wasm"))]
@@ -284,6 +286,10 @@ impl CodeIndexingPageView {
         // and emits AvailableServersDetected for each workspace, which the
         // subscription below handles.
         let persisted = PersistedWorkspace::handle(ctx);
+        ctx.observe(&persisted, |me, _, ctx| {
+            me.resize_workspace_mouse_states(ctx);
+            ctx.notify();
+        });
 
         ctx.subscribe_to_model(&persisted, move |me, _model, event, ctx| match event {
             PersistedWorkspaceEvent::AvailableServersDetected {
@@ -325,6 +331,7 @@ impl CodeIndexingPageView {
             PersistedWorkspaceEvent::InstallationSucceeded
             | PersistedWorkspaceEvent::InstallationFailed
             | PersistedWorkspaceEvent::WorkspaceAdded { .. } => {
+                me.resize_workspace_mouse_states(ctx);
                 ctx.notify();
             }
         });
@@ -346,6 +353,9 @@ impl CodeIndexingPageView {
                 .map(|_| Default::default())
                 .collect(),
             codebase_delete_mouse_states: (0..codebase_count).map(|_| Default::default()).collect(),
+            remove_lsp_folder_mouse_states: (0..workspace_count)
+                .map(|_| Default::default())
+                .collect(),
             #[cfg(not(target_family = "wasm"))]
             remote_codebase_manual_resync_mouse_states: (0..remote_codebase_count)
                 .map(|_| Default::default())
@@ -380,9 +390,15 @@ impl CodeIndexingPageView {
         PageType::new_monolith(widget, Some(PAGE_TITLE), true)
     }
 
-    /// Resize `open_project_rules_mouse_states` to match the current workspace count.
+    /// Resize workspace controls when folders or language servers change.
     fn resize_workspace_mouse_states(&mut self, ctx: &AppContext) {
         let workspace_count = PersistedWorkspace::as_ref(ctx).workspaces().count();
+        self.lsp_row_mouse_states.resize_with(
+            PersistedWorkspace::as_ref(ctx).total_lsp_server_count(true),
+            Default::default,
+        );
+        self.remove_lsp_folder_mouse_states
+            .resize_with(workspace_count, Default::default);
         if self.open_project_rules_mouse_states.len() != workspace_count {
             self.open_project_rules_mouse_states
                 .resize_with(workspace_count, Default::default);
@@ -447,6 +463,7 @@ pub enum CodeIndexingPageAction {
     ToggleAutoIndexing,
     ManualResync(PathBuf),
     DeleteIndex(PathBuf),
+    RemoveLspFolder(PathBuf),
     #[cfg(not(target_family = "wasm"))]
     RequestRemoteIndex(RemotePath),
     #[cfg(not(target_family = "wasm"))]
@@ -546,6 +563,23 @@ impl TypedActionView for CodeIndexingPageView {
                     manager.drop_index(repo_path.clone(), ctx);
                 });
             }
+            CodeIndexingPageAction::RemoveLspFolder(workspace_path) => {
+                PersistedWorkspace::handle(ctx).update(ctx, |workspace, ctx| {
+                    workspace.remove_lsp_servers_for_path(workspace_path, ctx);
+                });
+                LspManagerModel::handle(ctx).update(ctx, |manager, ctx| {
+                    let server_types: Vec<_> = manager
+                        .servers_for_workspace(workspace_path)
+                        .into_iter()
+                        .flatten()
+                        .map(|server| server.as_ref(ctx).server_type())
+                        .collect();
+                    for server_type in server_types {
+                        manager.remove_server(workspace_path, server_type, ctx);
+                    }
+                });
+                ctx.notify();
+            }
             #[cfg(not(target_family = "wasm"))]
             CodeIndexingPageAction::RequestRemoteIndex(remote_path) => {
                 RemoteCodebaseIndexModel::handle(ctx).update(ctx, |model, ctx| {
@@ -587,8 +621,8 @@ impl TypedActionView for CodeIndexingPageView {
                     LspManagerModel::handle(ctx).update(ctx, |manager, ctx| {
                         manager.remove_server(workspace_path, *server_type, ctx);
                     });
-                    PersistedWorkspace::handle(ctx).update(ctx, |workspace, _| {
-                        workspace.disable_lsp_server_for_path(workspace_path, *server_type);
+                    PersistedWorkspace::handle(ctx).update(ctx, |workspace, ctx| {
+                        workspace.disable_lsp_server_for_path(workspace_path, *server_type, ctx);
                     });
                 } else {
                     // Toggling ON: enable and spawn
@@ -601,14 +635,14 @@ impl TypedActionView for CodeIndexingPageView {
                         ctx
                     );
                     let workspace_path = workspace_path.clone();
-                    PersistedWorkspace::handle(ctx).update(ctx, |workspace, _ctx| {
-                        workspace.enable_lsp_server_for_path(&workspace_path, *server_type);
+                    PersistedWorkspace::handle(ctx).update(ctx, |workspace, ctx| {
+                        workspace.enable_lsp_server_for_path(&workspace_path, *server_type, ctx);
                         #[cfg(feature = "local_fs")]
                         workspace.execute_lsp_task(
                             crate::ai::persisted_workspace::LspTask::Spawn {
                                 file_path: workspace_path,
                             },
-                            _ctx,
+                            ctx,
                         );
                     });
                 }
@@ -660,14 +694,14 @@ impl TypedActionView for CodeIndexingPageView {
                 {
                     let workspace_path = workspace_path.clone();
                     let server_type = *server_type;
-                    PersistedWorkspace::handle(ctx).update(ctx, |workspace, _ctx| {
+                    PersistedWorkspace::handle(ctx).update(ctx, |workspace, ctx| {
                         workspace.execute_lsp_task(
                             crate::ai::persisted_workspace::LspTask::Install {
                                 file_path: workspace_path.clone(),
                                 repo_root: workspace_path,
                                 server_type,
                             },
-                            _ctx,
+                            ctx,
                         );
                     });
                 }
@@ -689,14 +723,14 @@ impl TypedActionView for CodeIndexingPageView {
                 );
                 let workspace_path = workspace_path.clone();
                 let server_type = *server_type;
-                PersistedWorkspace::handle(ctx).update(ctx, |workspace, _ctx| {
-                    workspace.enable_lsp_server_for_path(&workspace_path, server_type);
+                PersistedWorkspace::handle(ctx).update(ctx, |workspace, ctx| {
+                    workspace.enable_lsp_server_for_path(&workspace_path, server_type, ctx);
                     #[cfg(feature = "local_fs")]
                     workspace.execute_lsp_task(
                         crate::ai::persisted_workspace::LspTask::Spawn {
                             file_path: workspace_path,
                         },
-                        _ctx,
+                        ctx,
                     );
                 });
                 ctx.notify();
@@ -793,6 +827,7 @@ impl SettingsWidget for CodePageWidget {
         let mouse_states = InitializedFoldersMouseStates {
             codebase_manual_resync: view.codebase_manual_resync_mouse_states.clone(),
             codebase_delete: view.codebase_delete_mouse_states.clone(),
+            remove_lsp_folder: view.remove_lsp_folder_mouse_states.clone(),
             #[cfg(not(target_family = "wasm"))]
             remote_codebase_manual_resync: view.remote_codebase_manual_resync_mouse_states.clone(),
             #[cfg(not(target_family = "wasm"))]
@@ -1047,6 +1082,7 @@ impl CodePageWidget {
         let InitializedFoldersMouseStates {
             codebase_manual_resync: codebase_manual_resync_mouse_states,
             codebase_delete: codebase_delete_mouse_states,
+            remove_lsp_folder: remove_lsp_folder_mouse_states,
             #[cfg(not(target_family = "wasm"))]
                 remote_codebase_manual_resync: remote_codebase_manual_resync_mouse_states,
             #[cfg(not(target_family = "wasm"))]
@@ -1124,8 +1160,12 @@ impl CodePageWidget {
                 .cloned()
                 .unwrap_or_default();
 
-            // Skip workspaces that have neither an index nor any LSP servers
-            if index_status.is_none() && all_servers.is_empty() {
+            // Suggestions can be rediscovered after removal; they do not initialize a folder.
+            if index_status.is_none()
+                && !all_servers
+                    .iter()
+                    .any(|(_, state)| *state != EnablementState::Suggested)
+            {
                 continue;
             }
 
@@ -1158,6 +1198,7 @@ impl CodePageWidget {
                 lsp_manager,
                 resync_mouse,
                 delete_mouse,
+                remove_lsp_folder_mouse_states[workspace_idx].clone(),
                 lsp_mouse_states,
                 open_rules_mouse,
                 suggested_server_statuses,
@@ -1212,6 +1253,7 @@ impl CodePageWidget {
         lsp_manager: &LspManagerModel,
         resync_mouse: MouseStateHandle,
         delete_mouse: MouseStateHandle,
+        remove_lsp_folder_mouse: MouseStateHandle,
         lsp_mouse_states: Vec<LspServerRowMouseStates>,
         open_rules_mouse: MouseStateHandle,
         suggested_server_statuses: &HashMap<(PathBuf, LSPServerType), LspRepoStatus>,
@@ -1281,9 +1323,33 @@ impl CodePageWidget {
             None
         };
 
+        let mut header_actions = Flex::row().with_spacing(SUB_SECTION_MARGIN);
+        if let Some(open_rules_button) = open_rules_button {
+            header_actions.add_child(open_rules_button);
+        }
+        if index_status.is_none() {
+            let workspace_path = workspace_path.to_path_buf();
+            let tooltip_builder = ui_builder.clone();
+            header_actions.add_child(
+                ui_builder
+                    .button(ButtonVariant::Secondary, remove_lsp_folder_mouse)
+                    .with_text_label("Remove folder".to_owned())
+                    .with_tooltip(move || {
+                        tooltip_builder.tool_tip("Stop language servers and remove this folder from the list. Files are kept.".to_owned()).build().finish()
+                    })
+                    .build()
+                    .on_click(move |ctx, _, _| {
+                        ctx.dispatch_typed_action(CodeIndexingPageAction::RemoveLspFolder(
+                            workspace_path.clone(),
+                        ));
+                    })
+                    .finish(),
+            );
+        }
+
         workspace_content.add_child(self.render_workspace_header(
             user_friendly,
-            open_rules_button,
+            Some(header_actions.finish()),
             appearance,
         ));
 
@@ -2272,6 +2338,7 @@ impl SettingsWidget for CodeIndexingPageWidget {
         let mouse_states = InitializedFoldersMouseStates {
             codebase_manual_resync: view.codebase_manual_resync_mouse_states.clone(),
             codebase_delete: view.codebase_delete_mouse_states.clone(),
+            remove_lsp_folder: view.remove_lsp_folder_mouse_states.clone(),
             #[cfg(not(target_family = "wasm"))]
             remote_codebase_manual_resync: view.remote_codebase_manual_resync_mouse_states.clone(),
             #[cfg(not(target_family = "wasm"))]
