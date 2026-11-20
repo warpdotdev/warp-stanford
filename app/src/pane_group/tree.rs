@@ -4,6 +4,7 @@ use std::{fmt, iter, mem};
 use pathfinder_geometry::rect::RectF;
 use pathfinder_geometry::vector::Vector2F;
 use warp_core::features::FeatureFlag;
+use warp_core::ui::theme::Fill;
 use warp_errors::report_error;
 use warpui::elements::{
     ChildAnchor, ConstrainedBox, Container, DispatchEventResult, Element, Empty, EventHandler,
@@ -12,11 +13,12 @@ use warpui::elements::{
     Shrinkable, Stack,
 };
 use warpui::platform::Cursor;
-use warpui::{AppContext, EntityId, ViewContext};
+use warpui::{AppContext, EntityId, SingletonEntity, ViewContext};
 
 use super::{ActivationReason, PaneGroup, PaneId};
 use crate::app_state;
 use crate::pane_group::{DraggedBorder, PaneGroupAction, get_minimum_pane_size};
+use crate::settings::PaneSettings;
 use crate::themes::theme::WarpTheme;
 
 #[cfg(test)]
@@ -26,11 +28,23 @@ mod tests;
 pub(in crate::pane_group) const DEFAULT_FLEX_VALUE: f32 = 1.0;
 pub(in crate::pane_group) const DEFAULT_FLEX_SIZE: PaneFlex = PaneFlex(DEFAULT_FLEX_VALUE);
 
-pub fn get_divider_thickness() -> f32 {
-    if FeatureFlag::MinimalistUI.is_enabled() {
-        1.0
-    } else {
-        2.0
+pub fn get_divider_thickness(ctx: &AppContext) -> f32 {
+    PaneSettings::as_ref(ctx)
+        .pane_divider_thickness
+        .pixels()
+        .unwrap_or_else(|| {
+            if FeatureFlag::MinimalistUI.is_enabled() {
+                1.0
+            } else {
+                2.0
+            }
+        })
+}
+
+fn divider_fill(theme: &WarpTheme, ctx: &AppContext) -> Fill {
+    match *PaneSettings::as_ref(ctx).pane_divider_color {
+        Some(color) => color.resolve(theme).into(),
+        None => theme.split_pane_border_color(),
     }
 }
 
@@ -1067,6 +1081,8 @@ impl PaneBranch {
         // Iterate through all the panes, skipping nodes that have no visible children
         // except when children are hidden for move operations (we need empty drop targets)
         let mut dividers = self.dividers.iter();
+        let divider_thickness = get_divider_thickness(app);
+        let divider_fill = divider_fill(theme, app);
 
         // Collect divider positions to render them as positioned elements later.
         let mut divider_positions = Vec::new();
@@ -1106,7 +1122,11 @@ impl PaneBranch {
                 // the divider should still take precedence over the divider's clickbox.
                 let position_id = format!("divider_placeholder_{}", divider.id);
                 divider_positions.push((divider, position_id.clone()));
-                parent.add_child(create_divider_placeholder(self.axis, &position_id));
+                parent.add_child(create_divider_placeholder(
+                    self.axis,
+                    &position_id,
+                    divider_thickness,
+                ));
             }
         }
         let mut stack = Stack::new().with_constrain_absolute_children();
@@ -1116,9 +1136,9 @@ impl PaneBranch {
         // (the reason we have to do it this way is explained in the large comment above)
         for (divider, position_id) in divider_positions {
             let divider_element = if FeatureFlag::MinimalistUI.is_enabled() {
-                create_minimalist_divider(self.axis, divider, theme)
+                create_minimalist_divider(self.axis, divider, divider_fill, divider_thickness)
             } else {
-                create_divider(self.axis, divider, theme)
+                create_divider(self.axis, divider, divider_fill, divider_thickness)
             };
 
             stack.add_positioned_child(
@@ -1386,8 +1406,12 @@ impl FindPaneByDirection for PaneBranch {
 
 /// Create an invisible placeholder element that occupies the same space as the divider
 /// and saves its position so the actual divider can be anchored to it.
-fn create_divider_placeholder(direction: SplitDirection, position_id: &str) -> Box<dyn Element> {
-    let divider_thickness = get_divider_thickness() - 1.0;
+fn create_divider_placeholder(
+    direction: SplitDirection,
+    position_id: &str,
+    divider_thickness: f32,
+) -> Box<dyn Element> {
+    let divider_thickness = divider_thickness - 1.0;
 
     let placeholder = match direction {
         SplitDirection::Horizontal => ConstrainedBox::new(Empty::new().finish())
@@ -1421,13 +1445,10 @@ fn divider_mouse_down_action(
 fn create_divider(
     direction: SplitDirection,
     item: &Divider,
-    theme: &WarpTheme,
+    fill: Fill,
+    thickness: f32,
 ) -> Box<dyn Element> {
-    let divider = ConstrainedBox::new(
-        Rect::new()
-            .with_background(theme.split_pane_border_color())
-            .finish(),
-    );
+    let divider = ConstrainedBox::new(Rect::new().with_background(fill).finish());
 
     let cursor_shape = match direction {
         SplitDirection::Horizontal => Cursor::ResizeLeftRight,
@@ -1438,8 +1459,8 @@ fn create_divider(
     let mouse_state = item.mouse_state.clone();
 
     Hoverable::new(item.mouse_state.clone(), |_| match direction {
-        SplitDirection::Horizontal => divider.with_width(get_divider_thickness()).finish(),
-        SplitDirection::Vertical => divider.with_height(get_divider_thickness()).finish(),
+        SplitDirection::Horizontal => divider.with_width(thickness).finish(),
+        SplitDirection::Vertical => divider.with_height(thickness).finish(),
     })
     .on_mouse_down(move |ctx, _, position| {
         ctx.dispatch_typed_action(divider_mouse_down_action(
@@ -1457,13 +1478,10 @@ fn create_divider(
 fn create_minimalist_divider(
     direction: SplitDirection,
     item: &Divider,
-    theme: &WarpTheme,
+    fill: Fill,
+    thickness: f32,
 ) -> Box<dyn Element> {
-    let divider = ConstrainedBox::new(
-        Rect::new()
-            .with_background(theme.split_pane_border_color())
-            .finish(),
-    );
+    let divider = ConstrainedBox::new(Rect::new().with_background(fill).finish());
 
     let cursor_shape = match direction {
         SplitDirection::Horizontal => Cursor::ResizeLeftRight,
@@ -1473,18 +1491,14 @@ fn create_minimalist_divider(
     let border_id = item.id;
     let mouse_state = item.mouse_state.clone();
     let hoverable = Hoverable::new(item.mouse_state.clone(), |_| match direction {
-        SplitDirection::Horizontal => {
-            Container::new(divider.with_width(get_divider_thickness()).finish())
-                .with_padding_left(DIVIDER_RESIZE_PADDING)
-                .with_padding_right(DIVIDER_RESIZE_PADDING)
-                .finish()
-        }
-        SplitDirection::Vertical => {
-            Container::new(divider.with_height(get_divider_thickness()).finish())
-                .with_padding_top(DIVIDER_RESIZE_PADDING)
-                .with_padding_bottom(DIVIDER_RESIZE_PADDING)
-                .finish()
-        }
+        SplitDirection::Horizontal => Container::new(divider.with_width(thickness).finish())
+            .with_padding_left(DIVIDER_RESIZE_PADDING)
+            .with_padding_right(DIVIDER_RESIZE_PADDING)
+            .finish(),
+        SplitDirection::Vertical => Container::new(divider.with_height(thickness).finish())
+            .with_padding_top(DIVIDER_RESIZE_PADDING)
+            .with_padding_bottom(DIVIDER_RESIZE_PADDING)
+            .finish(),
     })
     .on_mouse_down(move |ctx, _, position| {
         ctx.dispatch_typed_action(divider_mouse_down_action(
@@ -1501,8 +1515,10 @@ fn create_minimalist_divider(
     match direction {
         SplitDirection::Horizontal => stack.add_positioned_child(
             hoverable.finish(),
+            // The placeholder reserves `thickness - 1`, so shift the centered line by half of
+            // that to cover the reserved space instead of straddling its leading edge.
             OffsetPositioning::offset_from_parent(
-                Vector2F::new(0., 0.),
+                Vector2F::new((thickness - 1.) / 2., 0.),
                 ParentOffsetBounds::Unbounded,
                 ParentAnchor::TopMiddle,
                 ChildAnchor::TopMiddle,
