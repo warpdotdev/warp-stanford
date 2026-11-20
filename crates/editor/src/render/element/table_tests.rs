@@ -1,25 +1,163 @@
 use std::cell::Cell;
+use std::rc::Rc;
 use std::sync::Arc;
 
 use pathfinder_color::ColorU;
 use string_offset::CharOffset;
-use warpui_core::elements::{Axis, scroll_delta_for_pointer_movement};
+use sum_tree::SumTree;
+use warpui_core::elements::{
+    Axis, DispatchEventResult, EventHandler, Rect, scroll_delta_for_pointer_movement,
+};
 use warpui_core::fonts::FamilyId;
 use warpui_core::geometry::rect::RectF;
 use warpui_core::geometry::vector::vec2f;
+use warpui_core::platform::WindowStyle;
 use warpui_core::text_layout::TextFrame;
 use warpui_core::units::{IntoPixels, Pixels};
+use warpui_core::{
+    App, AppContext, Element, Entity, EntityIdSet, Event, Presenter, TypedActionView, View,
+    WindowInvalidation,
+};
 
+use super::RenderableTable;
 use crate::content::text::{FormattedTable, table_cell_offset_maps};
+use crate::render::element::RenderableBlock;
 use crate::render::element::table::{
     model_table_layout_report, row_geometry_from_layout_report, table_cursor_relative_offset,
     table_horizontal_scroll_delta, table_scroll_data, table_scrollbar,
     table_selection_relative_range,
 };
 use crate::render::model::table_offset_map::TableOffsetMap;
+use crate::render::model::test_utils::TEST_STYLES;
 use crate::render::model::{
-    BlockSpacing, CellLayout, LaidOutTable, RenderedSelection, TableBlockConfig, TableStyle,
+    BlockItem, BlockSpacing, CellLayout, LaidOutTable, RenderState, RenderedSelection,
+    TableBlockConfig, TableStyle,
 };
+
+struct TableScrollTestView {
+    model: Rc<RenderState>,
+}
+
+impl Entity for TableScrollTestView {
+    type Event = ();
+}
+
+impl TypedActionView for TableScrollTestView {
+    type Action = ();
+}
+
+impl View for TableScrollTestView {
+    fn render(&self, _: &AppContext) -> Box<dyn Element> {
+        let model = self.model.clone();
+        let content = model.content();
+        let (item, _) = content
+            .viewport_items(100.0.into_pixels(), 90.0.into_pixels(), Pixels::zero())
+            .next()
+            .expect("table should be visible");
+        let mut table = RenderableTable::new(item);
+        table.viewport_bounds = Some(RectF::new(vec2f(0.0, 0.0), vec2f(90.0, 96.0)));
+        drop(content);
+
+        EventHandler::new(Rect::new().finish())
+            .on_scroll_wheel(move |ctx, app, delta, modifiers| {
+                let event = Event::ScrollWheel {
+                    position: vec2f(10.0, 10.0),
+                    delta,
+                    precise: true,
+                    modifiers: *modifiers,
+                };
+                if table.dispatch_event(&model, &event.into(), ctx, app) {
+                    DispatchEventResult::StopPropagation
+                } else {
+                    DispatchEventResult::PropagateToParent
+                }
+            })
+            .finish()
+    }
+
+    fn ui_name() -> &'static str {
+        "TableScrollTestView"
+    }
+}
+
+#[test]
+fn table_wheel_events_propagate_at_horizontal_edges() {
+    App::test((), |mut app| async move {
+        let mut model =
+            RenderState::new_for_test(TEST_STYLES, 90.0.into_pixels(), 100.0.into_pixels());
+        let mut content = SumTree::new();
+        content.push(BlockItem::Table(Box::new(test_laid_out_table())));
+        model.set_content(content);
+        let model = Rc::new(model);
+        let (window, _view) = app.add_window(WindowStyle::NotStealFocus, |_| TableScrollTestView {
+            model: model.clone(),
+        });
+        let mut presenter = Presenter::new(window);
+        app.update(|ctx| {
+            let mut updated = EntityIdSet::default();
+            updated.insert(ctx.root_view_id(window).expect("test root view"));
+            presenter.invalidate(
+                WindowInvalidation {
+                    updated,
+                    ..Default::default()
+                },
+                ctx,
+            );
+            presenter.build_scene(vec2f(90.0, 100.0), 1.0, None, ctx);
+        });
+
+        app.read(|ctx| {
+            let wheel = |delta| Event::ScrollWheel {
+                position: vec2f(10.0, 10.0),
+                delta,
+                precise: true,
+                modifiers: Default::default(),
+            };
+            assert!(
+                !presenter
+                    .dispatch_event(wheel(vec2f(20.0, 0.0)), ctx)
+                    .handled
+            );
+            assert!(
+                presenter
+                    .dispatch_event(wheel(vec2f(-20.0, 0.0)), ctx)
+                    .handled
+            );
+            let content = model.content();
+            let BlockItem::Table(table) = content.block_items().next().expect("table") else {
+                panic!("expected table");
+            };
+            assert_eq!(table.scroll_left(), 20.0.into_pixels());
+            assert!(
+                presenter
+                    .dispatch_event(wheel(vec2f(-500.0, 0.0)), ctx)
+                    .handled
+            );
+            assert_eq!(table.scroll_left(), 110.0.into_pixels());
+            assert!(
+                !presenter
+                    .dispatch_event(wheel(vec2f(-20.0, 0.0)), ctx)
+                    .handled
+            );
+            assert!(
+                !presenter
+                    .dispatch_event(wheel(vec2f(0.0, -20.0)), ctx)
+                    .handled
+            );
+            assert!(
+                presenter
+                    .dispatch_event(wheel(vec2f(500.0, 0.0)), ctx)
+                    .handled
+            );
+            assert_eq!(table.scroll_left(), Pixels::zero());
+            assert!(
+                !presenter
+                    .dispatch_event(wheel(vec2f(20.0, 0.0)), ctx)
+                    .handled
+            );
+        });
+    });
+}
 
 fn test_laid_out_table() -> LaidOutTable {
     let source = "h1\th2\nr1\tr2\nx\ty\n";
