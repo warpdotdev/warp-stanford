@@ -40,7 +40,7 @@ pub fn create_lsp_server_selector(
                 info.server_type.binary_name(),
                 UiComponentStyles {
                     font_family_id: Some(appearance.ui_font_family()),
-                    font_color: Some(theme.main_text_color(theme.background()).into_solid()),
+                    font_color: Some(theme.main_text_color(theme.surface_1()).into_solid()),
                     font_size: Some(appearance.monospace_font_size()),
                     ..Default::default()
                 },

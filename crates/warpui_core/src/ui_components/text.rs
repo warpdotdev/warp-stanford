@@ -113,6 +113,11 @@ impl Span {
         }
     }
 
+    pub(crate) fn with_default_style(mut self, styles: UiComponentStyles) -> Self {
+        self.text.styles = styles.merge(self.text.styles);
+        self
+    }
+
     pub fn with_highlights(mut self, highlight_indices: Vec<usize>, highlight: Highlight) -> Self {
         self.text = self.text.with_highlights(highlight_indices, highlight);
         self
@@ -194,3 +199,7 @@ impl UiComponent for Paragraph {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "text_tests.rs"]
+mod tests;
