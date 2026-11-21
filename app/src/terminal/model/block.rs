@@ -2806,6 +2806,22 @@ impl Block {
         self.output_grid.grid_handler.is_mode_set(mode)
     }
 
+    /// Returns whether the block's program has set the keyboard modes of a pager, such as `less`,
+    /// macOS `more`, or `git log`.
+    ///
+    /// Pagers put the keyboard in application mode so they can read arrow and paging keys. REPLs
+    /// with line editors, such as the Python 3.13+ interpreter, do the same but also enable
+    /// bracketed paste, which pagers have no use for.
+    ///
+    /// This doesn't check which screen the program draws on, so pagers on the alt screen, such as
+    /// plain `less`, match too. Pagers that don't set these modes, such as util-linux `more` or
+    /// `less --no-keypad`, don't match.
+    pub fn has_pager_keyboard_modes(&self) -> bool {
+        self.is_mode_set(TermMode::APP_CURSOR)
+            && self.is_mode_set(TermMode::APP_KEYPAD)
+            && !self.is_mode_set(TermMode::BRACKETED_PASTE)
+    }
+
     pub fn has_received_precmd(&self) -> bool {
         self.precmd_state == PrecmdState::AfterPrecmd
     }

@@ -414,20 +414,20 @@ impl SnackbarHeader {
     }
 
     /// Returns whether the snackbar should be hidden when there is a long running command.
-    /// While a command is executing, we hide the snackbar if:
-    /// 1) The user has scrolled OR
-    /// 2) The height of the block's _output_ grid is taller than the content area.
-    /// In the latter case, we hide the snackbar to make sure that commands like `git log` and
-    /// `less` (which simulate full screen apps) don't have the snackbar shown on top of them.
+    /// Pagers that draw on the normal screen grow the block's output taller than the content area
+    /// as the user pages, so the snackbar would otherwise cover the top rows of the current page.
     fn should_hide_snackbar_during_long_running_command(
         block: &Block,
         params: &BlockGridParams,
         scroll_position: ScrollPosition,
         element_size: Vector2F,
     ) -> bool {
-        // A user has scrolled iff they are fixed at a pixel position. Otherwise, they are fixed to
-        // the bottom of a block.
-        let has_scrolled = matches!(scroll_position, ScrollPosition::FixedAtPosition { .. });
+        let has_scrolled = match scroll_position {
+            ScrollPosition::FixedAtPosition { .. }
+            | ScrollPosition::FixedWithinLongRunningBlock { .. } => true,
+            ScrollPosition::FollowsBottomOfMostRecentBlock
+            | ScrollPosition::WaterfallGapFollowsBottomOfMostRecentBlock { .. } => false,
+        };
 
         let block_output_taller_than_content_area =
             block.output_grid_displayed_height().into_lines()
@@ -435,7 +435,8 @@ impl SnackbarHeader {
                     .to_lines(params.grid_render_params.size_info.cell_height_px)
                 > HEIGHT_FUDGE_FACTOR_LINES;
 
-        !has_scrolled && !block_output_taller_than_content_area
+        !has_scrolled
+            && (!block_output_taller_than_content_area || block.has_pager_keyboard_modes())
     }
 
     fn clear_state(&mut self) {

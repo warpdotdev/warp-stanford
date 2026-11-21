@@ -301,6 +301,39 @@ pub fn test_long_running_block_bottom_padding() {
 }
 
 #[test]
+fn test_has_pager_keyboard_modes_requires_application_keyboard_modes() {
+    let mut block = TestBlockBuilder::new().build();
+    block.start();
+    block.preexec(Default::default());
+    assert!(!block.has_pager_keyboard_modes());
+
+    // `less -X` and macOS `more` send these sequences when they start.
+    block.set_mode(ansi::Mode::CursorKeys);
+    assert!(!block.has_pager_keyboard_modes());
+    block.set_keypad_application_mode();
+    assert!(block.has_pager_keyboard_modes());
+
+    // They undo them when they exit.
+    block.unset_keypad_application_mode();
+    block.unset_mode(ansi::Mode::CursorKeys);
+    assert!(!block.has_pager_keyboard_modes());
+}
+
+#[test]
+fn test_has_pager_keyboard_modes_excludes_repl_with_bracketed_paste() {
+    let mut block = TestBlockBuilder::new().build();
+    block.start();
+    block.preexec(Default::default());
+
+    // The Python 3.13+ REPL enables the same keyboard modes as a pager, plus bracketed paste.
+    block.set_mode(ansi::Mode::CursorKeys);
+    block.set_keypad_application_mode();
+    block.set_mode(ansi::Mode::BracketedPaste);
+
+    assert!(!block.has_pager_keyboard_modes());
+}
+
+#[test]
 pub fn empty_pre_bootstrap_block_is_not_long_running() {
     warpui::r#async::block_on(async {
         let mut block = TestBlockBuilder::new()

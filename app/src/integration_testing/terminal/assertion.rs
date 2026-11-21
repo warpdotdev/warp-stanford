@@ -751,6 +751,26 @@ pub fn assert_snackbar_is_not_visible(tab_index: usize) -> AssertionCallback {
     assert_snackbar_visibility(tab_index, false /* is_visible */)
 }
 
+/// Asserts that the active block's output is taller than the terminal's content area.
+pub fn assert_output_taller_than_content_area(tab_index: usize) -> AssertionCallback {
+    Box::new(move |app, window_id| {
+        let terminal_view = single_terminal_view_for_tab(app, window_id, tab_index);
+        terminal_view.read(app, |view, ctx| {
+            let output_height = view
+                .model
+                .lock()
+                .block_list()
+                .active_block()
+                .output_grid_displayed_height();
+            let content_height = view.content_element_height_lines(ctx);
+            async_assert!(
+                output_height > content_height,
+                "Expected output height {output_height:?} to exceed content height {content_height:?}"
+            )
+        })
+    })
+}
+
 /// Asserts that the current scroll position is equal to `ScrollPosition`.
 pub fn assert_scroll_position(
     tab_index: usize,
