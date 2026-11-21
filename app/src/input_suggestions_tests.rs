@@ -1,16 +1,23 @@
 use std::collections::HashSet;
 
 use chrono::Local;
+use pathfinder_geometry::vector::vec2f;
 use warp_completer::completer::{
     EngineFileType, Match, MatchStrategy, MatchedSuggestion, Priority, Suggestion,
     SuggestionResults, SuggestionType, TopLevelCommandCaseSensitivity,
 };
 use warp_completer::meta::Span;
 use warp_core::ui::appearance::Appearance;
-use warpui::App;
+use warpui::elements::{
+    Align, ConstrainedBox, Element, Flex, ParentElement, Rect, SavePosition, Stack,
+};
 use warpui::platform::WindowStyle;
+use warpui::{App, AppContext, Entity, TypedActionView, View, WindowInvalidation};
 
-use super::{HistoryInputSuggestion, InputSuggestions, TabCompletionsPreselectOption};
+use super::{
+    HistoryInputSuggestion, InputSuggestions, TabCompletionsPreselectOption,
+    add_clipped_item_label_to_row,
+};
 use crate::ai::blocklist::AIQueryHistory;
 use crate::input_suggestions::{HistoryOrder, filter_tab_suggestions};
 use crate::terminal::HistoryEntry;
@@ -401,4 +408,123 @@ fn test_history_order() {
         ai_query_different.history_order(Some(current_session_id), &live_sessions,),
         HistoryOrder::DifferentSession
     );
+}
+
+const LABEL_ROW_WIDTH: f32 = 300.;
+const LABEL_TEXT_POSITION_ID: &str = "item_label_text";
+const LABEL_DESCRIPTION_POSITION_ID: &str = "item_label_description";
+
+/// Lays out a clipped suggestion row label of a fixed width, with fixed-size stand-ins for the
+/// item text and description. (Unit tests can't measure real text: the test font system lays out
+/// every line as empty.)
+struct ClippedItemLabelRowView {
+    text_width: f32,
+    description_width: f32,
+}
+
+impl Entity for ClippedItemLabelRowView {
+    type Event = ();
+}
+
+impl View for ClippedItemLabelRowView {
+    fn ui_name() -> &'static str {
+        "ClippedItemLabelRowView"
+    }
+
+    fn render(&self, _: &AppContext) -> Box<dyn Element> {
+        let stand_in = |width, position_id| {
+            SavePosition::new(
+                ConstrainedBox::new(Rect::new().finish())
+                    .with_width(width)
+                    .with_height(20.)
+                    .finish(),
+                position_id,
+            )
+            .finish()
+        };
+
+        let mut row = Flex::row();
+        add_clipped_item_label_to_row(
+            &mut row,
+            stand_in(self.text_width, LABEL_TEXT_POSITION_ID),
+            Some(stand_in(
+                self.description_width,
+                LABEL_DESCRIPTION_POSITION_ID,
+            )),
+        );
+
+        // Positions are only committed inside a `Stack`.
+        Stack::new()
+            .with_child(
+                Align::new(
+                    ConstrainedBox::new(row.finish())
+                        .with_width(LABEL_ROW_WIDTH)
+                        .finish(),
+                )
+                .top_left()
+                .finish(),
+            )
+            .finish()
+    }
+}
+
+impl TypedActionView for ClippedItemLabelRowView {
+    type Action = ();
+}
+
+/// Returns the laid out widths of the text and description stand-ins.
+fn clipped_item_label_widths(text_width: f32, description_width: f32) -> (f32, f32) {
+    App::test((), |mut app| async move {
+        let (window_id, _) =
+            app.add_window(WindowStyle::NotStealFocus, |_| ClippedItemLabelRowView {
+                text_width,
+                description_width,
+            });
+        let invalidation = WindowInvalidation {
+            updated: [app
+                .root_view_id(window_id)
+                .expect("window should have a root view")]
+            .into_iter()
+            .collect(),
+            ..Default::default()
+        };
+
+        app.update(move |ctx| {
+            let presenter = ctx
+                .presenter(window_id)
+                .expect("window should have a presenter");
+            let mut presenter = presenter.borrow_mut();
+            presenter.invalidate(invalidation, ctx);
+            presenter.build_scene(vec2f(800., 600.), 1., None, ctx);
+            let positions = presenter.position_cache();
+            let width_of = |position_id| {
+                positions
+                    .get_position(position_id)
+                    .unwrap_or_else(|| panic!("{position_id} should be laid out"))
+                    .width()
+            };
+            (
+                width_of(LABEL_TEXT_POSITION_ID),
+                width_of(LABEL_DESCRIPTION_POSITION_ID),
+            )
+        })
+    })
+}
+
+#[test]
+fn test_clipped_text_gets_all_width_the_description_leaves() {
+    // A long file name next to a short "File" label: the label keeps its width and the name fills
+    // the rest of the row, with no width left unused.
+    let (text_width, description_width) = clipped_item_label_widths(500., 40.);
+
+    assert_eq!(description_width, 40.);
+    assert_eq!(text_width, LABEL_ROW_WIDTH - 40.);
+}
+
+#[test]
+fn test_clipped_text_that_fits_keeps_its_width() {
+    let (text_width, description_width) = clipped_item_label_widths(100., 40.);
+
+    assert_eq!(text_width, 100.);
+    assert_eq!(description_width, 40.);
 }
