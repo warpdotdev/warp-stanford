@@ -103,6 +103,10 @@ pub struct LineStyle {
     ///
     /// `None` leaves tab stop behavior up to the backend defaults.
     pub fixed_width_tab_size: Option<u8>,
+    /// Turns off the font's OpenType ligature (`liga`) and contextual-alternate (`calt`)
+    /// substitutions. Many coding fonts implement ligatures such as `===` or `->` through `calt`,
+    /// so disabling `liga` alone is not enough.
+    pub disable_ligatures: bool,
 }
 
 pub struct WindowOptions {
