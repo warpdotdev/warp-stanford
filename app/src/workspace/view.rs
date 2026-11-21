@@ -4164,6 +4164,13 @@ impl Workspace {
                         }
                     });
 
+                // Re-added tabs can join a group and expand it, so put back the saved state.
+                for group_snapshot in &window_snapshot.tab_groups {
+                    if let Some(group) = self.tab_groups.get_mut(&group_snapshot.id) {
+                        group.collapsed = group_snapshot.collapsed;
+                    }
+                }
+
                 if self.tab_count() == 0 {
                     if self.should_trigger_get_started_onboarding(ctx) {
                         self.trigger_get_started_onboarding(ctx);
