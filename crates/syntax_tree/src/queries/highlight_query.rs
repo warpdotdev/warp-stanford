@@ -49,9 +49,7 @@ impl HighlightQuery {
         let mut range_map = RangeMap::new();
 
         let mut cursor = QueryCursor::new();
-        let byte_start = range.start.to_buffer_byte_offset(buffer).as_usize();
-        let byte_end = range.end.to_buffer_byte_offset(buffer).as_usize();
-        cursor.set_byte_range(byte_start..byte_end);
+        cursor.set_byte_range(tree_byte(range.start, buffer)..tree_byte(range.end, buffer));
         let mut captures = cursor.captures(query, tree.root_node(), TextBuffer(buffer));
 
         while let Some(matches) = captures.next() {
@@ -63,10 +61,8 @@ impl HighlightQuery {
                     .and_then(|inner| *inner);
 
                 if let Some(color) = color {
-                    let char_start =
-                        ByteOffset::from(insertion_range.start).to_buffer_char_offset(buffer);
-                    let char_end =
-                        ByteOffset::from(insertion_range.end).to_buffer_char_offset(buffer);
+                    let char_start = char_offset(insertion_range.start, buffer);
+                    let char_end = char_offset(insertion_range.end, buffer);
                     if char_start < char_end {
                         range_map.insert(char_start..char_end, color);
                     }
@@ -76,6 +72,26 @@ impl HighlightQuery {
 
         range_map
     }
+}
+
+/// The buffer keeps a one-byte block marker ahead of its text, which the syntax tree is parsed
+/// without. Byte `n` of the tree is therefore byte `n + 1` of the buffer.
+fn buffer_byte(tree_byte: usize) -> ByteOffset {
+    ByteOffset::from(tree_byte + 1)
+}
+
+/// Converts a byte position in the syntax tree to the character position highlights are keyed
+/// by, which also counts from the start of the text.
+fn char_offset(tree_byte: usize, buffer: &Buffer) -> CharOffset {
+    let buffer_chars = buffer_byte(tree_byte).to_buffer_char_offset(buffer);
+    CharOffset::from(buffer_chars.as_usize().saturating_sub(1))
+}
+
+/// Converts a character position counted from the start of the text to its byte position in the
+/// syntax tree.
+fn tree_byte(offset: CharOffset, buffer: &Buffer) -> usize {
+    let buffer_bytes = CharOffset::from(offset.as_usize() + 1).to_buffer_byte_offset(buffer);
+    buffer_bytes.as_usize().saturating_sub(1)
 }
 
 fn convert_capture_name_to_color(name: &str, color_map: &ColorMap) -> Option<ColorU> {
@@ -136,10 +152,8 @@ impl<'a> TextProvider<&'a [u8]> for TextBuffer<'a> {
 
     fn text(&mut self, node: Node) -> Self::I {
         let range = node.range();
-        self.0.bytes_in_range(
-            ByteOffset::from(range.start_byte),
-            ByteOffset::from(range.end_byte),
-        )
+        self.0
+            .bytes_in_range(buffer_byte(range.start_byte), buffer_byte(range.end_byte))
     }
 }
 
