@@ -388,6 +388,7 @@ fn test_programming_language_to_extension() {
         ("tsx", "tsx"),
         ("xml", "xml"),
         ("vue", "vue"),
+        ("svelte", "svelte"),
         ("dockerfile", "dockerfile"),
         ("starlark", "bzl"),
         ("objective-c", "m"),
