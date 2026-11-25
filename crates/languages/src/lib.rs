@@ -179,7 +179,7 @@ fn language_by_filename_parts(
         "json" => language_by_name("json"),
         "jq" => language_by_name("jq"),
         "tf" | "hcl" | "tfvars" => language_by_name("hcl"),
-        "lua" => language_by_name("lua"),
+        "lua" | "luau" => language_by_name("lua"),
         "nix" => language_by_name("nix"),
         "rb" => language_by_name("ruby"),
         "php" | "phtml" => language_by_name("php"),

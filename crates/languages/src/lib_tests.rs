@@ -95,3 +95,19 @@ fn markdown_extensions_resolve_to_markdown() {
         );
     }
 }
+
+/// Luau is derived from Lua and has no bundled grammar of its own, so `.luau` files should resolve
+/// to Lua and get its syntax highlighting.
+#[test]
+fn luau_extension_resolves_to_lua() {
+    let path = StandardizedPath::try_new("/tmp/script.luau").expect("test path should be absolute");
+    let language = language_by_filename(&path).expect("`.luau` files should resolve to a language");
+    assert_eq!(language.display_name(), "Lua");
+}
+
+#[test]
+fn local_luau_extension_resolves_to_lua() {
+    let language = language_by_local_filename(Path::new("script.luau"))
+        .expect("`.luau` files should resolve to a language");
+    assert_eq!(language.display_name(), "Lua");
+}
