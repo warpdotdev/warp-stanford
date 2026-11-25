@@ -2,7 +2,9 @@
 
 use string_offset::CharOffset;
 use warp_core::features::FeatureFlag;
-use warpui_core::{App, ModelHandle, ReadModel};
+use warpui_core::geometry::vector::vec2f;
+use warpui_core::units::{IntoPixels, Pixels};
+use warpui_core::{App, ModelHandle, ReadModel, SizeConstraint};
 
 use super::model::test_utils::{TEST_STYLES, init_logging};
 use super::model::{BlockItem, RenderEvent, RenderState};
@@ -41,6 +43,72 @@ fn test_simple_edit() {
 Paragraph (2 characters, 1 lines, 24.00px tall)
 "#,
         );
+    });
+}
+
+#[test]
+fn rendered_markdown_table_scrolls_within_a_constrained_viewport() {
+    App::test((), |mut app| async move {
+        let _flag = FeatureFlag::MarkdownTables.override_enabled(true);
+        let state = TestState::new(&mut app);
+        state.render.update(&mut app, |render_state, ctx| {
+            let size_info = render_state.viewport().viewport_size(
+                SizeConstraint::new(vec2f(0.0, 0.0), vec2f(240.0, 400.0)),
+                vec2f(40.0, 0.0),
+                Some(220.0.into_pixels()),
+            );
+            assert_eq!(size_info.viewport_size, vec2f(180.0, 400.0));
+            render_state.set_viewport_size(size_info, ctx);
+        });
+        state
+            .markdown(
+                "| First | Second | Third | Fourth | Fifth | Sixth | Seventh | Eighth |\n\
+                 | --- | --- | --- | --- | --- | --- | --- | --- |\n\
+                 | Alpha | Bravo | Charlie | Delta | Echo | Foxtrot | Golf | Hotel |\n",
+                &mut app,
+            )
+            .await;
+        app.read(|ctx| state.render.as_ref(ctx).layout_complete())
+            .await;
+
+        state.render.read(&app, |render_state, _| {
+            assert!(!render_state.container_scrolls_horizontally());
+            let viewport = render_state.viewport();
+            let content = render_state.content();
+            let (item, block) = content
+                .viewport_items(viewport.height(), viewport.width(), viewport.scroll_top())
+                .next()
+                .expect("table should be visible");
+            let BlockItem::Table(table) = block else {
+                panic!("expected rendered table, got {block:?}");
+            };
+            let width = item.content_size.x().into_pixels();
+            assert!(table.horizontal_scroll_allowed);
+            assert_eq!(width, 164.0.into_pixels());
+            assert!(table.width() > width);
+            assert_eq!(table.viewport_width(width), width);
+
+            assert!(table.scroll_horizontally((-40.0).into_pixels(), width));
+            assert_eq!(table.scroll_left(), 40.0.into_pixels());
+            assert!(table.set_scroll_left(Pixels::new(f32::MAX), width));
+            assert_eq!(table.scroll_left(), table.max_scroll_left(width));
+            assert!(!table.scroll_horizontally((-40.0).into_pixels(), width));
+            assert!(table.set_scroll_left((-40.0).into_pixels(), width));
+            assert_eq!(table.scroll_left(), Pixels::zero());
+
+            let hidden_cell = table.offset_map.cell_range(0, 7).expect("eighth column");
+            let bounds = table
+                .character_bounds(hidden_cell.start, vec2f(0.0, 0.0))
+                .expect("eighth column should have character bounds");
+            assert!(bounds.min_x() > width.as_f32());
+            assert!(table.reveal_offset(hidden_cell.start, width));
+            let revealed_bounds = table
+                .character_bounds(hidden_cell.start, vec2f(0.0, 0.0))
+                .expect("revealed column should have character bounds");
+            assert!(revealed_bounds.min_x() >= 0.0);
+            assert!(revealed_bounds.max_x() <= width.as_f32());
+            assert_eq!(viewport.scroll_left(), Pixels::zero());
+        });
     });
 }
 
