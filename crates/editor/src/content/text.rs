@@ -15,7 +15,6 @@ use markdown_parser::markdown_parser::{
 use markdown_parser::weight::CustomWeight;
 use markdown_parser::{
     CodeBlockText, FormattedImage, FormattedTextLine, FormattedTextStyles, Hyperlink,
-    parse_markdown,
 };
 pub use markdown_parser::{
     FormattedTable, FormattedTableAlignment, FormattedTextFragment, FormattedTextInline,
@@ -199,47 +198,6 @@ impl<'a> std::ops::AddAssign<&'a Self> for TextSummary {
     }
 }
 
-fn parse_table_cell_markdown_inline(cell: &str) -> FormattedTextInline {
-    let Ok(parsed) = parse_markdown(cell) else {
-        return vec![FormattedTextFragment::plain_text(cell)];
-    };
-
-    let mut inline = Vec::new();
-    for line in parsed.lines {
-        match line {
-            FormattedTextLine::Line(fragments) => inline.extend(fragments),
-            FormattedTextLine::Heading(header) => inline.extend(header.text),
-            FormattedTextLine::OrderedList(item) => inline.extend(item.indented_text.text),
-            FormattedTextLine::UnorderedList(item) => inline.extend(item.text),
-            FormattedTextLine::TaskList(item) => inline.extend(item.text),
-            FormattedTextLine::CodeBlock(block) => {
-                inline.push(FormattedTextFragment::plain_text(block.code));
-            }
-            FormattedTextLine::Table(table) => {
-                inline.push(FormattedTextFragment::plain_text(
-                    table.to_internal_format(),
-                ));
-            }
-            FormattedTextLine::Image(image) => {
-                inline.push(FormattedTextFragment::plain_text(image.alt_text));
-            }
-            FormattedTextLine::LineBreak => {
-                inline.push(FormattedTextFragment::plain_text("\n"));
-            }
-            FormattedTextLine::HorizontalRule => {
-                inline.push(FormattedTextFragment::plain_text("---"));
-            }
-            FormattedTextLine::Embedded(_) => {}
-        }
-    }
-
-    if inline.is_empty() {
-        vec![FormattedTextFragment::plain_text(cell)]
-    } else {
-        inline
-    }
-}
-
 impl std::ops::AddAssign<Self> for TextSummary {
     fn add_assign(&mut self, other: Self) {
         *self += &other;
@@ -369,29 +327,12 @@ pub enum BlockType {
     Text(BufferBlockStyle),
 }
 
-/// Parse the internal tab-separated format
-/// `parse_markdown` to each cell so that inline formatting is preserved.
+/// Parse the internal tab-separated format, preserving inline Markdown formatting.
 pub fn table_from_internal_format_with_inline_markdown(
     content: &str,
-    mut alignments: Vec<FormattedTableAlignment>,
+    alignments: Vec<FormattedTableAlignment>,
 ) -> FormattedTable {
-    let parse_line = |line: &str| -> Vec<FormattedTextInline> {
-        line.split('\t')
-            .map(parse_table_cell_markdown_inline)
-            .collect()
-    };
-
-    let mut lines = content.lines().peekable();
-    let headers = lines.next().map(parse_line).unwrap_or_default();
-    let rows: Vec<Vec<FormattedTextInline>> = lines.map(parse_line).collect();
-    let col_count = headers.len();
-    alignments.resize(col_count, FormattedTableAlignment::default());
-
-    FormattedTable {
-        headers,
-        alignments,
-        rows,
-    }
+    FormattedTable::from_internal_format_with_alignments(content, alignments)
 }
 
 #[derive(Clone, Debug)]
