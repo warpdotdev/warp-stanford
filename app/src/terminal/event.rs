@@ -42,6 +42,10 @@ pub enum Event {
     AfterBlockStarted {
         block_id: BlockId,
         command: String,
+        /// The command as reported by the shell's preexec hook. Unlike `command`, this reflects
+        /// any history expansion the shell applied (e.g. `!!`). In Bash it may be truncated at the
+        /// first job control operator.
+        shell_reported_command: String,
         is_for_in_band_command: bool,
     },
     /// Sent when a new block is created.

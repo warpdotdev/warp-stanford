@@ -3001,6 +3001,7 @@ impl Block {
             self.event_proxy.send_app_event(Event::AfterBlockStarted {
                 block_id: self.id.clone(),
                 command: self.command_to_string(),
+                shell_reported_command: data.command,
                 is_for_in_band_command,
             });
         }

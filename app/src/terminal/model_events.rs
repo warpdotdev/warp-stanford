@@ -216,10 +216,12 @@ impl ModelEventDispatcher {
             Event::AfterBlockStarted {
                 block_id,
                 command,
+                shell_reported_command,
                 is_for_in_band_command,
             } => ModelEvent::AfterBlockStarted {
                 block_id,
                 command,
+                shell_reported_command,
                 is_for_in_band_command,
             },
             Event::BlockMetadataReceived(block_metadata_received_event) => {
@@ -392,6 +394,10 @@ pub enum ModelEvent {
     AfterBlockStarted {
         block_id: BlockId,
         command: String,
+        /// The command as reported by the shell's preexec hook. Unlike `command`, this reflects
+        /// any history expansion the shell applied (e.g. `!!`). In Bash it may be truncated at the
+        /// first job control operator.
+        shell_reported_command: String,
         is_for_in_band_command: bool,
     },
     /// Sent when a new block is created.
