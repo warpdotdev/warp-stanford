@@ -87,6 +87,8 @@ use crate::terminal::event::{
     UserBlockCompleted,
 };
 use crate::terminal::general_settings::UserDefaultShellUnsupportedBannerState;
+use crate::terminal::input::inline_history::HistoryTab;
+use crate::terminal::input::inline_menu::InlineMenuTabConfig;
 use crate::terminal::input::slash_commands::SlashCommandsEvent;
 use crate::terminal::keys::TerminalKeybindings;
 use crate::terminal::local_shell::LocalShellState;
@@ -3372,6 +3374,239 @@ fn editor_down_does_not_reenter_inline_history_menu_update() {
                 "Down on empty inline history must close the menu after the nested checkout ends"
             );
         });
+    });
+}
+
+/// Opens the inline history menu on a terminal with `cd ~` and `ls` in its history, with `initial`
+/// typed into the input first.
+async fn open_inline_history_menu_with_text(
+    app: &mut App,
+    initial: &str,
+) -> (
+    warpui::ViewHandle<Input>,
+    warpui::ViewHandle<super::inline_history::InlineHistoryMenuView>,
+) {
+    let terminal = add_window_with_bootstrapped_terminal(
+        app,
+        Some(vec!["cd ~".to_string(), "ls".to_string()]),
+        None,
+    )
+    .await;
+    let input = terminal.read(app, |view, _| view.input().clone());
+    let session_id = input
+        .read(app, |input, _| input.active_block_session_id())
+        .expect("bootstrapped input should have a session id");
+    simulate_directory_for_completion(session_id, &terminal, app, "/tmp");
+    input.update(app, |input, ctx| {
+        input
+            .editor
+            .update(ctx, |editor, ctx| editor.user_insert(initial, ctx));
+        input.open_inline_history_menu(ctx);
+    });
+    let menu = input.read(app, |input, _| input.inline_history_menu_view.clone());
+    (input, menu)
+}
+
+fn input_buffer_text(input: &warpui::ViewHandle<Input>, app: &App) -> String {
+    input.read(app, |input, ctx| input.editor.as_ref(ctx).buffer_text(ctx))
+}
+
+fn is_inline_history_menu_open(input: &warpui::ViewHandle<Input>, app: &App) -> bool {
+    input.read(app, |input, ctx| {
+        input
+            .suggestions_mode_model
+            .as_ref(ctx)
+            .is_inline_history_menu()
+    })
+}
+
+#[test]
+fn inline_history_menu_searches_again_when_input_is_edited_after_no_results() {
+    let _inline_history_menu = FeatureFlag::InlineHistoryMenu.override_enabled(true);
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        let (input, menu) = open_inline_history_menu_with_text(&mut app, "zzz").await;
+        assert_eq!(menu.read(&app, |view, ctx| view.result_count(ctx)), 0);
+
+        // Delete the text that had no matches, then type something that does match.
+        input.update(&mut app, |input, ctx| {
+            input.editor.update(ctx, |editor, ctx| {
+                editor.backspace(ctx);
+                editor.backspace(ctx);
+                editor.backspace(ctx);
+                editor.user_insert("l", ctx);
+            });
+        });
+
+        assert!(is_inline_history_menu_open(&input, &app));
+        assert_eq!(
+            selected_inline_history_command(&menu, &app).as_deref(),
+            Some("ls")
+        );
+        // The results must not overwrite what the user is typing.
+        assert_eq!(input_buffer_text(&input, &app), "l");
+
+        // Further typing keeps searching rather than closing the menu.
+        input.update(&mut app, |input, ctx| {
+            input
+                .editor
+                .update(ctx, |editor, ctx| editor.user_insert("s", ctx));
+        });
+        assert!(is_inline_history_menu_open(&input, &app));
+        assert_eq!(input_buffer_text(&input, &app), "ls");
+    });
+}
+
+#[test]
+fn inline_history_menu_dismiss_restores_edited_text() {
+    let _inline_history_menu = FeatureFlag::InlineHistoryMenu.override_enabled(true);
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        let (input, _menu) = open_inline_history_menu_with_text(&mut app, "zzz").await;
+
+        input.update(&mut app, |input, ctx| {
+            input
+                .editor
+                .update(ctx, |editor, ctx| editor.user_insert("y", ctx));
+        });
+        input.update(&mut app, |input, ctx| {
+            input.suggestions_mode_model.update(ctx, |model, ctx| {
+                model.close_and_restore_buffer(ctx);
+            });
+        });
+
+        assert!(!is_inline_history_menu_open(&input, &app));
+        assert_eq!(input_buffer_text(&input, &app), "zzzy");
+    });
+}
+
+#[test]
+fn inline_history_menu_previews_selection_after_arrowing_from_edited_search() {
+    let _inline_history_menu = FeatureFlag::InlineHistoryMenu.override_enabled(true);
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        let (input, menu) = open_inline_history_menu_with_text(&mut app, "zzz").await;
+
+        input.update(&mut app, |input, ctx| {
+            input.editor.update(ctx, |editor, ctx| {
+                editor.backspace(ctx);
+                editor.backspace(ctx);
+                editor.backspace(ctx);
+            });
+        });
+        assert_eq!(input_buffer_text(&input, &app), "");
+
+        menu.update(&mut app, |view, ctx| view.select_up(ctx));
+
+        let selected = selected_inline_history_command(&menu, &app);
+        assert!(selected.is_some());
+        assert_eq!(Some(input_buffer_text(&input, &app)), selected);
+        assert!(is_inline_history_menu_open(&input, &app));
+    });
+}
+
+/// Opens the menu on text with no matches, then replaces it with `l`, which matches `ls`.
+async fn search_inline_history_menu_for_l(
+    app: &mut App,
+) -> (
+    warpui::ViewHandle<Input>,
+    warpui::ViewHandle<super::inline_history::InlineHistoryMenuView>,
+) {
+    let (input, menu) = open_inline_history_menu_with_text(app, "zzz").await;
+    input.update(app, |input, ctx| {
+        input.editor.update(ctx, |editor, ctx| {
+            editor.backspace(ctx);
+            editor.backspace(ctx);
+            editor.backspace(ctx);
+            editor.user_insert("l", ctx);
+        });
+    });
+    (input, menu)
+}
+
+#[test]
+fn inline_history_menu_tab_switch_keeps_edited_search_text() {
+    let _inline_history_menu = FeatureFlag::InlineHistoryMenu.override_enabled(true);
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        let (input, menu) = search_inline_history_menu_for_l(&mut app).await;
+        menu.update(&mut app, |view, ctx| {
+            view.model().update(ctx, |model, _| {
+                model.set_tab_configs(vec![
+                    InlineMenuTabConfig {
+                        id: HistoryTab::All,
+                        label: "All".to_string(),
+                        filters: HashSet::new(),
+                    },
+                    InlineMenuTabConfig {
+                        id: HistoryTab::Commands,
+                        label: "Commands".to_string(),
+                        filters: HashSet::from([QueryFilter::Commands]),
+                    },
+                ]);
+            });
+        });
+
+        assert!(menu.update(&mut app, |view, ctx| view.select_next_tab(ctx)));
+
+        assert_eq!(input_buffer_text(&input, &app), "l");
+        input.update(&mut app, |input, ctx| {
+            input
+                .editor
+                .update(ctx, |editor, ctx| editor.user_insert("s", ctx));
+        });
+        assert!(is_inline_history_menu_open(&input, &app));
+        assert_eq!(input_buffer_text(&input, &app), "ls");
+    });
+}
+
+#[test]
+fn inline_history_menu_enter_submits_edited_search_text() {
+    let _inline_history_menu = FeatureFlag::InlineHistoryMenu.override_enabled(true);
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        let (input, menu) = search_inline_history_menu_for_l(&mut app).await;
+        assert_eq!(
+            selected_inline_history_command(&menu, &app).as_deref(),
+            Some("ls")
+        );
+
+        let executed_commands = Rc::new(RefCell::new(Vec::<String>::new()));
+        let executed_commands_for_subscription = executed_commands.clone();
+        app.update(|ctx| {
+            ctx.subscribe_to_view(&input, move |_, event: &super::Event, _| {
+                if let super::Event::ExecuteCommand(event) = event {
+                    executed_commands_for_subscription
+                        .borrow_mut()
+                        .push(event.command.clone());
+                }
+            });
+        });
+
+        input.update(&mut app, |input, ctx| input.input_enter(ctx));
+
+        assert_eq!(executed_commands.borrow().as_slice(), ["l".to_owned()]);
+    });
+}
+
+#[test]
+fn inline_history_menu_closes_when_previewed_selection_is_edited() {
+    let _inline_history_menu = FeatureFlag::InlineHistoryMenu.override_enabled(true);
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        let (input, menu) = open_inline_history_menu_with_text(&mut app, "").await;
+        let previewed = selected_inline_history_command(&menu, &app)
+            .expect("history should have a selected command");
+        assert_eq!(input_buffer_text(&input, &app), previewed);
+
+        input.update(&mut app, |input, ctx| {
+            input
+                .editor
+                .update(ctx, |editor, ctx| editor.user_insert("x", ctx));
+        });
+
+        assert!(!is_inline_history_menu_open(&input, &app));
+        assert_eq!(input_buffer_text(&input, &app), format!("{previewed}x"));
     });
 }
 

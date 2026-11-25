@@ -163,6 +163,8 @@ pub struct InlineHistoryMenuView {
     pending_tab_switch_selection: Option<HistoryItemIdentity>,
     caller_supplied_tabs: bool,
     pending_initial_buffer_sync: bool,
+    is_previewing_selection: bool,
+    skip_selection_preview: bool,
 }
 
 impl InlineHistoryMenuView {
@@ -385,25 +387,31 @@ impl InlineHistoryMenuView {
                     });
                 }
             },
-            InlineMenuEvent::SelectedItem { item } => match item {
-                AcceptHistoryItem::Command {
-                    command,
-                    linked_workflow_data,
-                } => {
-                    ctx.emit(InlineHistoryMenuEvent::SelectCommand {
-                        command: command.clone(),
-                        linked_workflow_data: linked_workflow_data.clone(),
-                    });
+            // While the user is typing a search, selections made by new results or tab switches
+            // would overwrite what they typed. Only their own navigation previews a row.
+            InlineMenuEvent::SelectedItem { .. } if me.skip_selection_preview => {}
+            InlineMenuEvent::SelectedItem { item } => {
+                me.is_previewing_selection = true;
+                match item {
+                    AcceptHistoryItem::Command {
+                        command,
+                        linked_workflow_data,
+                    } => {
+                        ctx.emit(InlineHistoryMenuEvent::SelectCommand {
+                            command: command.clone(),
+                            linked_workflow_data: linked_workflow_data.clone(),
+                        });
+                    }
+                    AcceptHistoryItem::AIPrompt { query_text } => {
+                        ctx.emit(InlineHistoryMenuEvent::SelectAIPrompt {
+                            query_text: query_text.clone(),
+                        });
+                    }
+                    AcceptHistoryItem::Conversation { .. } => {
+                        ctx.emit(InlineHistoryMenuEvent::SelectConversation);
+                    }
                 }
-                AcceptHistoryItem::AIPrompt { query_text } => {
-                    ctx.emit(InlineHistoryMenuEvent::SelectAIPrompt {
-                        query_text: query_text.clone(),
-                    });
-                }
-                AcceptHistoryItem::Conversation { .. } => {
-                    ctx.emit(InlineHistoryMenuEvent::SelectConversation);
-                }
-            },
+            }
             InlineMenuEvent::Dismissed => {
                 ctx.emit(InlineHistoryMenuEvent::Close);
             }
@@ -445,6 +453,8 @@ impl InlineHistoryMenuView {
             pending_tab_switch_selection: None,
             caller_supplied_tabs,
             pending_initial_buffer_sync: false,
+            is_previewing_selection: false,
+            skip_selection_preview: false,
         }
     }
 
@@ -464,11 +474,13 @@ impl InlineHistoryMenuView {
         self.menu_view.as_ref(app).result_count()
     }
 
-    pub fn select_up(&self, ctx: &mut ViewContext<Self>) {
+    pub fn select_up(&mut self, ctx: &mut ViewContext<Self>) {
+        self.skip_selection_preview = false;
         self.menu_view.update(ctx, |v, ctx| v.select_up(ctx));
     }
 
-    pub fn select_down(&self, ctx: &mut ViewContext<Self>) {
+    pub fn select_down(&mut self, ctx: &mut ViewContext<Self>) {
+        self.skip_selection_preview = false;
         let should_close = self.menu_view.read(ctx, |v, _| {
             let result_count = v.result_count();
             let is_last_item_selected =
@@ -496,7 +508,32 @@ impl InlineHistoryMenuView {
         self.pending_initial_buffer_sync = true;
     }
 
+    pub fn is_previewing_selection(&self) -> bool {
+        self.is_previewing_selection
+    }
+
+    /// Reruns the search for text the user edited while the menu is open. The results don't
+    /// replace the input, so the user can keep typing.
+    pub fn search_for_edited_text(&mut self, query_text: String, ctx: &mut ViewContext<Self>) {
+        if self.current_query_text(ctx) == query_text {
+            return;
+        }
+        self.skip_selection_preview = true;
+        let filters = self.model.as_ref(ctx).active_tab_filters();
+        self.mixer.update(ctx, |mixer, ctx| {
+            mixer.run_query(
+                Query {
+                    text: query_text,
+                    filters,
+                },
+                ctx,
+            );
+        });
+    }
+
     fn open_with_current_buffer(&mut self, ctx: &mut ViewContext<Self>) {
+        self.is_previewing_selection = false;
+        self.skip_selection_preview = false;
         let query_text = self.buffer_model.as_ref(ctx).current_value().to_owned();
         let filters = self.model.as_ref(ctx).active_tab_filters();
         self.mixer.update(ctx, |mixer, ctx| {
