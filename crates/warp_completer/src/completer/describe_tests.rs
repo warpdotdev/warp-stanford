@@ -13,7 +13,8 @@ use crate::completer::{EngineDirEntry, TopLevelCommandCaseSensitivity};
 use crate::meta::{Span, SpannedItem};
 use crate::signatures::CommandRegistry;
 use crate::signatures::testing::{
-    add_content_signature, create_test_command_registry, git_signature, test_signature,
+    add_content_signature, create_test_command_registry, git_signature,
+    posix_noncompliant_java_signature, test_signature,
 };
 
 #[cfg(windows)]
@@ -533,5 +534,23 @@ fn test_describe_case_insensitive_option() {
     assert_eq!(
         describe_at_cursor("Add-Content -e ASCII", ByteOffset::from(14), &ctx),
         None
+    );
+}
+
+#[test]
+fn test_describe_posix_noncompliant_short_option_case_insensitive() {
+    let registry = create_test_command_registry([posix_noncompliant_java_signature(true)]);
+    let ctx = FakeCompletionContext::new(registry);
+
+    assert_eq!(
+        describe_at_cursor("java -d foo=bar", ByteOffset::from(7), &ctx),
+        Some(Description {
+            token: "-d".to_string().spanned(Span::new(5, 7)),
+            description_text: Some("set a system property".to_string()),
+            suggestion_type: SuggestionType::Option(
+                MatchRequirement::EntireName,
+                OptionCaseSensitivity::CaseInsensitive
+            ),
+        })
     );
 }

@@ -14,30 +14,45 @@ use crate::parsers::SignatureAtTokenIndex;
 /// We currently omit surfacing flags that are already in partial_without_dashes, except
 /// for the most recent one (i.e. with `-abc`, we would omit `-a` and `-b` but include
 /// `-c`), which is used for the Describe API.
+///
+/// If the signature's flags are POSIX-noncompliant (e.g. `java -version`), short hand flags
+/// cannot be combined. A non-empty partial then only matches the flag it names exactly
+/// (ignoring case if the signature is case-insensitive), and the replacement is that flag. Case
+/// folding follows the signature's directive, as the parser does, rather than the user's
+/// `MatchStrategy`.
 fn short_hand_flag_suggestions(
     signature: &SpecSignature,
     partial_without_dashes: &str,
 ) -> impl Iterator<Item = MatchedSuggestion> + use<> {
+    let is_combinable = !signature.parser_directives.flags_are_posix_noncompliant
+        || partial_without_dashes.is_empty();
+    let case_sensitivity = if signature.parser_directives.always_case_insensitive {
+        OptionCaseSensitivity::CaseInsensitive
+    } else {
+        OptionCaseSensitivity::CaseSensitive
+    };
     signature
         .short_hand_flags()
         .filter_map(|flag| {
-            // Since short hand flags can be written one after the other
-            // (e.g. ssh -Xv), we can't just prefix match the flag against partial.
-            // Instead, the logic below assumes that a short hand flag can only be used once.
-            // Note that this is not however true in the real world (e.g. ssh -vv
-            // is valid). We should eventually use  the completions spec to figure out
-            // how many times an option can be repeated in a given command.
-            let is_flag_already_included = partial_without_dashes.contains(flag.name);
-            // We want to include the flag if it is the most recent one the user has
-            // typed, so we can provide a suggestion for the current short hand flags.
-            // This suggestion is used so we have an entry for the current flags in the
-            // completions menu, and also in our Describe API.
-            let is_current_flag = partial_without_dashes
-                .chars()
-                .last()
-                .is_some_and(|c| c.to_string() == flag.name);
-            let should_include_flag = !is_flag_already_included || is_current_flag;
-            should_include_flag.then(|| {
+            let (replacement_text, is_case_sensitive_match) = if is_combinable {
+                // Since short hand flags can be written one after the other
+                // (e.g. ssh -Xv), we can't just prefix match the flag against partial.
+                // Instead, the logic below assumes that a short hand flag can only be used once.
+                // Note that this is not however true in the real world (e.g. ssh -vv
+                // is valid). We should eventually use  the completions spec to figure out
+                // how many times an option can be repeated in a given command.
+                let is_flag_already_included = partial_without_dashes.contains(flag.name);
+                // We want to include the flag if it is the most recent one the user has
+                // typed, so we can provide a suggestion for the current short hand flags.
+                // This suggestion is used so we have an entry for the current flags in the
+                // completions menu, and also in our Describe API.
+                let is_current_flag = partial_without_dashes
+                    .chars()
+                    .last()
+                    .is_some_and(|c| c.to_string() == flag.name);
+                if is_flag_already_included && !is_current_flag {
+                    return None;
+                }
                 let replacement_text = if is_current_flag {
                     // The replacement text should be exactly the existing flags.
                     format!("-{partial_without_dashes}")
@@ -45,27 +60,30 @@ fn short_hand_flag_suggestions(
                     // The replacement text should be the existing flags followed by the new one.
                     format!("-{}{}", partial_without_dashes, flag.name)
                 };
+                (replacement_text, true)
+            } else if partial_without_dashes == flag.name {
+                (format!("-{}", flag.name), true)
+            } else if signature.parser_directives.always_case_insensitive
+                && partial_without_dashes.to_lowercase() == flag.name.to_lowercase()
+            {
+                (format!("-{}", flag.name), false)
+            } else {
+                return None;
+            };
 
-                let case_sensitivity = if signature.parser_directives.always_case_insensitive {
-                    OptionCaseSensitivity::CaseInsensitive
-                } else {
-                    OptionCaseSensitivity::CaseSensitive
-                };
+            let suggestion = Suggestion::new(
+                format!("-{}", flag.name),
+                replacement_text,
+                flag.description.map(Into::into),
+                SuggestionType::Option(MatchRequirement::EntireName, case_sensitivity),
+                flag.priority.into(),
+            );
 
-                let suggestion = Suggestion::new(
-                    format!("-{}", flag.name),
-                    replacement_text,
-                    flag.description.map(Into::into),
-                    SuggestionType::Option(MatchRequirement::EntireName, case_sensitivity),
-                    flag.priority.into(),
-                );
-
-                MatchedSuggestion {
-                    suggestion,
-                    match_type: Match::Prefix {
-                        is_case_sensitive: true,
-                    },
-                }
+            Some(MatchedSuggestion {
+                suggestion,
+                match_type: Match::Prefix {
+                    is_case_sensitive: is_case_sensitive_match,
+                },
             })
         })
         .sorted_by(MatchedSuggestion::cmp_by_display)
