@@ -13,6 +13,7 @@ fn test_empty_line() {
                 line_height_ratio: 1.,
                 baseline_ratio: DEFAULT_TOP_BOTTOM_RATIO,
                 fixed_width_tab_size: None,
+                disable_ligatures: false,
             };
             let styles = [];
 
@@ -52,6 +53,7 @@ fn test_empty_text_frame() {
                 line_height_ratio: 1.,
                 baseline_ratio: DEFAULT_TOP_BOTTOM_RATIO,
                 fixed_width_tab_size: None,
+                disable_ligatures: false,
             };
             let styles = [];
 
@@ -96,6 +98,7 @@ fn test_cache_key_includes_fixed_width_tab_size() {
         font_size: OrderedFloat(12.),
         line_height_ratio: OrderedFloat(1.),
         fixed_width_tab_size: Some(4),
+        disable_ligatures: false,
         style_runs,
         max_width: OrderedFloat(100.),
         max_height: None,
@@ -111,6 +114,30 @@ fn test_cache_key_includes_fixed_width_tab_size() {
     assert!(key_4 != key_8);
 }
 
+#[test]
+fn test_cache_key_includes_disable_ligatures() {
+    let style_runs: &[(Range<usize>, StyleAndFont)] = &[];
+
+    let with_ligatures = CacheKeyRef {
+        text: "===",
+        font_size: OrderedFloat(12.),
+        line_height_ratio: OrderedFloat(1.),
+        fixed_width_tab_size: None,
+        disable_ligatures: false,
+        style_runs,
+        max_width: OrderedFloat(100.),
+        max_height: None,
+        alignment: TextAlignment::Left,
+        first_line_head_indent: None,
+        clip_config: None,
+    };
+    let without_ligatures = CacheKeyRef {
+        disable_ligatures: true,
+        ..with_ligatures
+    };
+
+    assert!(with_ligatures != without_ligatures);
+}
 #[test]
 fn test_calculate_line_baseline_position() {
     let baseline_position = default_compute_baseline_position(
