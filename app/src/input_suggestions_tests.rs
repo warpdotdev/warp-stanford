@@ -1,16 +1,22 @@
 use std::collections::HashSet;
 
 use chrono::Local;
+use pathfinder_geometry::vector::vec2f;
 use warp_completer::completer::{
     EngineFileType, Match, MatchStrategy, MatchedSuggestion, Priority, Suggestion,
     SuggestionResults, SuggestionType, TopLevelCommandCaseSensitivity,
 };
 use warp_completer::meta::Span;
 use warp_core::ui::appearance::Appearance;
-use warpui::App;
+use warpui::elements::{
+    Align, ConstrainedBox, Element, Flex, ParentElement, Rect, SavePosition, Stack,
+};
 use warpui::platform::WindowStyle;
+use warpui::{App, AppContext, Entity, EntityIdSet, TypedActionView, View, WindowInvalidation};
 
-use super::{HistoryInputSuggestion, InputSuggestions, TabCompletionsPreselectOption};
+use super::{
+    HistoryInputSuggestion, InputSuggestions, TabCompletionsPreselectOption, add_item_text_to_row,
+};
 use crate::ai::blocklist::AIQueryHistory;
 use crate::input_suggestions::{HistoryOrder, filter_tab_suggestions};
 use crate::terminal::HistoryEntry;
@@ -401,4 +407,132 @@ fn test_history_order() {
         ai_query_different.history_order(Some(current_session_id), &live_sessions,),
         HistoryOrder::DifferentSession
     );
+}
+
+const ROW_WIDTH: f32 = 300.;
+const ROW_TEXT_POSITION_ID: &str = "row_text";
+const ROW_DESCRIPTION_POSITION_ID: &str = "row_description";
+
+/// Lays out a row of the given width with fixed-size stand-ins for an item's text and description.
+struct ItemRowView {
+    text_width: f32,
+    description_width: Option<f32>,
+}
+
+impl Entity for ItemRowView {
+    type Event = ();
+}
+
+impl View for ItemRowView {
+    fn ui_name() -> &'static str {
+        "ItemRowView"
+    }
+
+    fn render(&self, _: &AppContext) -> Box<dyn Element> {
+        let stand_in = |width, position_id| {
+            SavePosition::new(
+                ConstrainedBox::new(Rect::new().finish())
+                    .with_width(width)
+                    .with_height(20.)
+                    .finish(),
+                position_id,
+            )
+            .finish()
+        };
+
+        let mut row = Flex::row();
+        add_item_text_to_row(
+            &mut row,
+            stand_in(self.text_width, ROW_TEXT_POSITION_ID),
+            self.description_width
+                .map(|width| stand_in(width, ROW_DESCRIPTION_POSITION_ID)),
+        );
+
+        Stack::new()
+            .with_child(
+                Align::new(
+                    ConstrainedBox::new(row.finish())
+                        .with_width(ROW_WIDTH)
+                        .finish(),
+                )
+                .top_left()
+                .finish(),
+            )
+            .finish()
+    }
+}
+
+impl TypedActionView for ItemRowView {
+    type Action = ();
+}
+
+/// Returns the laid out widths of the item text and description stand-ins.
+fn laid_out_item_row_widths(text_width: f32, description_width: Option<f32>) -> (f32, Option<f32>) {
+    App::test((), |mut app| async move {
+        let (window_id, _) = app.add_window(WindowStyle::NotStealFocus, |_| ItemRowView {
+            text_width,
+            description_width,
+        });
+        let invalidation = WindowInvalidation {
+            updated: EntityIdSet::from_iter([app
+                .root_view_id(window_id)
+                .expect("root view should exist")]),
+            ..Default::default()
+        };
+
+        app.update(|ctx| {
+            let presenter = ctx.presenter(window_id).expect("presenter should exist");
+            let mut presenter = presenter.borrow_mut();
+            presenter.invalidate(invalidation, ctx);
+            presenter.build_scene(vec2f(500., 500.), 1., None, ctx);
+
+            let position_cache = presenter.position_cache();
+            let text_width = position_cache
+                .get_position(ROW_TEXT_POSITION_ID)
+                .expect("text should be laid out")
+                .width();
+            let description_width = position_cache
+                .get_position(ROW_DESCRIPTION_POSITION_ID)
+                .map(|bounds| bounds.width());
+            (text_width, description_width)
+        })
+    })
+}
+
+#[test]
+fn item_text_that_fits_is_not_shrunk_for_its_description() {
+    let (text_width, description_width) = laid_out_item_row_widths(250., Some(500.));
+
+    assert_eq!(text_width, 250.);
+    assert_eq!(description_width, Some(50.));
+}
+
+#[test]
+fn short_description_keeps_its_full_width() {
+    let (text_width, description_width) = laid_out_item_row_widths(100., Some(80.));
+
+    assert_eq!(text_width, 100.);
+    assert_eq!(description_width, Some(80.));
+}
+
+#[test]
+fn item_text_wider_than_row_is_bounded_by_the_row() {
+    let (text_width, description_width) = laid_out_item_row_widths(500., Some(100.));
+
+    assert!(
+        (299.0..=300.).contains(&text_width),
+        "text should fill the row without exceeding it, got {text_width}"
+    );
+    assert!(
+        description_width.is_some_and(|width| width < 1.),
+        "description should be squeezed out, got {description_width:?}"
+    );
+}
+
+#[test]
+fn item_text_without_description_is_bounded_by_the_row() {
+    let (text_width, description_width) = laid_out_item_row_widths(500., None);
+
+    assert_eq!(text_width, 300.);
+    assert_eq!(description_width, None);
 }
