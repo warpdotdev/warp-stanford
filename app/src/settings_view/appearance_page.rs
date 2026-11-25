@@ -4108,7 +4108,7 @@ impl SettingsWidget for DimInactivePanesWidget {
 
 /// Parses a hex color typed by the user, tolerating a missing leading `#`.
 fn parse_pane_divider_hex_color(input: &str) -> Option<ColorU> {
-    let hex = input.trim_start_matches('#');
+    let hex = input.strip_prefix('#').unwrap_or(input);
     coloru_from_hex_string(&format!("#{hex}")).ok()
 }
 
@@ -5924,3 +5924,7 @@ impl From<ViewHandle<AppearanceSettingsPageView>> for SettingsPageViewHandle {
         SettingsPageViewHandle::Appearance(view_handle)
     }
 }
+
+#[cfg(test)]
+#[path = "appearance_page_tests.rs"]
+mod tests;
