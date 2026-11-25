@@ -3120,8 +3120,13 @@ impl Workspace {
             manager.register_view(window_id, ai_fact_view.clone());
         });
 
-        let working_directories_model =
-            ctx.add_model(|_| pane_group::WorkingDirectoriesModel::new());
+        let use_working_directory_roots =
+            *CodeSettings::as_ref(ctx).project_explorer_uses_working_directory;
+        let working_directories_model = ctx.add_model(|_| {
+            let mut model = pane_group::WorkingDirectoriesModel::new();
+            model.set_use_working_directory_roots(use_working_directory_roots);
+            model
+        });
 
         let left_panel_views = Self::compute_left_panel_views(ctx);
 
@@ -3269,6 +3274,12 @@ impl Workspace {
             ) {
                 me.update_left_panel_available_views(ctx);
                 ctx.notify();
+            }
+            if matches!(
+                event,
+                CodeSettingsChangedEvent::ProjectExplorerUsesWorkingDirectory { .. }
+            ) {
+                me.reroot_left_panels(ctx);
             }
         });
 
@@ -15501,6 +15512,20 @@ impl Workspace {
         }
     }
 
+    /// Applies the `project_explorer_uses_working_directory` setting and refreshes every tab, so
+    /// the project explorer and global search switch roots right away.
+    fn reroot_left_panels(&mut self, ctx: &mut ViewContext<Self>) {
+        let use_working_directory_roots =
+            *CodeSettings::as_ref(ctx).project_explorer_uses_working_directory;
+        self.working_directories_model.update(ctx, |model, _| {
+            model.set_use_working_directory_roots(use_working_directory_roots);
+        });
+        let pane_groups: Vec<ViewHandle<PaneGroup>> = self.tab_views().cloned().collect();
+        for pane_group in &pane_groups {
+            self.refresh_working_directories_for_pane_group(pane_group, ctx);
+        }
+    }
+
     fn refresh_working_directories_for_pane_group(
         &mut self,
         pane_group: &ViewHandle<PaneGroup>,
@@ -26832,6 +26857,11 @@ impl View for Workspace {
         }
         if *CodeSettings::as_ref(app).show_hidden_files {
             context.set.insert(flags::SHOW_HIDDEN_FILES);
+        }
+        if *CodeSettings::as_ref(app).project_explorer_uses_working_directory {
+            context
+                .set
+                .insert(flags::PROJECT_EXPLORER_USES_WORKING_DIRECTORY);
         }
 
         if self.team_uid(app).is_some() {

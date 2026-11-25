@@ -76,6 +76,150 @@ fn refresh_working_directories_collapses_subroots_to_nearest_repo_root() {
     });
 }
 
+// Regression tests for GH-12511: with the working directory setting on, the left panel
+// shows each terminal's directory instead of the enclosing repository root.
+#[test]
+fn refresh_working_directories_keeps_working_directories_when_enabled() {
+    App::test((), |mut app| async move {
+        let detected_repos_handle = app.add_singleton_model(|_| DetectedRepositories::default());
+
+        let temp_dir = tempfile::TempDir::new().expect("temp dir");
+        let repo_root = temp_dir.path().join("repo");
+        let repo_a = repo_root.join("a");
+        let repo_b = repo_root.join("b");
+        fs::create_dir_all(&repo_a).expect("create repo/a");
+        fs::create_dir_all(&repo_b).expect("create repo/b");
+
+        let canonical_repo_root = dunce::canonicalize(&repo_root).expect("canonical repo root");
+        let canonical_a = dunce::canonicalize(&repo_a).expect("canonical repo/a");
+        let canonical_b = dunce::canonicalize(&repo_b).expect("canonical repo/b");
+
+        detected_repos_handle.update(&mut app, |repos, _ctx| {
+            let canonical =
+                warp_util::standardized_path::StandardizedPath::from_local_canonicalized(
+                    canonical_repo_root.as_path(),
+                )
+                .expect("canonicalized path");
+            repos.insert_test_repo_root(canonical);
+        });
+
+        let pane_group_id = EntityId::new();
+        let terminal_1 = EntityId::new();
+        let terminal_2 = EntityId::new();
+
+        let working_directories_handle = app.add_model(|_| WorkingDirectoriesModel::new());
+        let (roots, repos): (HashSet<LocalOrRemotePath>, Vec<LocalOrRemotePath>) =
+            working_directories_handle.update(&mut app, |model, ctx| {
+                model.set_use_working_directory_roots(true);
+                model.refresh_working_directories_for_pane_group(
+                    pane_group_id,
+                    vec![
+                        (terminal_1, LocalOrRemotePath::Local(repo_a.clone())),
+                        (terminal_2, LocalOrRemotePath::Local(repo_b.clone())),
+                    ],
+                    vec![],
+                    Some(terminal_1),
+                    ctx,
+                );
+
+                let roots = model
+                    .most_recent_directories_for_pane_group(pane_group_id)
+                    .expect("pane group exists")
+                    .map(|dir| dir.path)
+                    .collect();
+                let repos = model
+                    .most_recent_repositories_for_pane_group(pane_group_id)
+                    .expect("pane group exists")
+                    .collect();
+                (roots, repos)
+            });
+
+        assert_eq!(
+            roots,
+            HashSet::from_iter([local(&canonical_a), local(&canonical_b)]),
+            "each terminal's working directory should be its own root"
+        );
+        assert_eq!(
+            repos,
+            vec![local(&canonical_repo_root)],
+            "the repository root should still be tracked for code review"
+        );
+    });
+}
+
+#[test]
+fn refresh_working_directories_does_not_widen_to_repo_root_for_editor_files_when_enabled() {
+    App::test((), |mut app| async move {
+        let detected_repos_handle = app.add_singleton_model(|_| DetectedRepositories::default());
+
+        let temp_dir = tempfile::TempDir::new().expect("temp dir");
+        let repo_root = temp_dir.path().join("repo");
+        let repo_a = repo_root.join("a");
+        let repo_b = repo_root.join("b");
+        fs::create_dir_all(&repo_a).expect("create repo/a");
+        fs::create_dir_all(&repo_b).expect("create repo/b");
+        let file_in_a = repo_a.join("main.rs");
+        let file_in_b = repo_b.join("lib.rs");
+        let file_at_root = repo_root.join("README.md");
+        fs::write(&file_in_a, "").expect("write repo/a/main.rs");
+        fs::write(&file_in_b, "").expect("write repo/b/lib.rs");
+        fs::write(&file_at_root, "").expect("write repo/README.md");
+
+        let canonical_repo_root = dunce::canonicalize(&repo_root).expect("canonical repo root");
+        let canonical_a = dunce::canonicalize(&repo_a).expect("canonical repo/a");
+        let canonical_b = dunce::canonicalize(&repo_b).expect("canonical repo/b");
+
+        detected_repos_handle.update(&mut app, |repos, _ctx| {
+            let canonical =
+                warp_util::standardized_path::StandardizedPath::from_local_canonicalized(
+                    canonical_repo_root.as_path(),
+                )
+                .expect("canonicalized path");
+            repos.insert_test_repo_root(canonical);
+        });
+
+        let pane_group_id = EntityId::new();
+        let terminal = EntityId::new();
+        let editor_in_a = EntityId::new();
+        let editor_in_b = EntityId::new();
+        let editor_at_root = EntityId::new();
+
+        let working_directories_handle = app.add_model(|_| WorkingDirectoriesModel::new());
+        let roots: HashSet<LocalOrRemotePath> =
+            working_directories_handle.update(&mut app, |model, ctx| {
+                model.set_use_working_directory_roots(true);
+                model.refresh_working_directories_for_pane_group(
+                    pane_group_id,
+                    vec![(terminal, LocalOrRemotePath::Local(repo_a.clone()))],
+                    vec![
+                        (editor_in_a, LocalOrRemotePath::Local(file_in_a.clone())),
+                        (editor_in_b, LocalOrRemotePath::Local(file_in_b.clone())),
+                        (
+                            editor_at_root,
+                            LocalOrRemotePath::Local(file_at_root.clone()),
+                        ),
+                    ],
+                    Some(terminal),
+                    ctx,
+                );
+
+                model
+                    .most_recent_directories_for_pane_group(pane_group_id)
+                    .expect("pane group exists")
+                    .map(|dir| dir.path)
+                    .collect()
+            });
+
+        // The file in repo/a is already under the terminal's root, the file in repo/b adds its
+        // own directory, and the README's directory (the repo root) contains the terminal's
+        // root, so it's skipped. The repository root never appears.
+        assert_eq!(
+            roots,
+            HashSet::from_iter([local(&canonical_a), local(&canonical_b)]),
+        );
+    });
+}
+
 #[test]
 fn refresh_working_directories_preserves_non_repo_paths_and_dedupes() {
     App::test((), |mut app| async move {

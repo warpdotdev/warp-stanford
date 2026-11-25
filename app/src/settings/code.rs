@@ -76,6 +76,18 @@ define_settings_group!(CodeSettings, settings: [
         toml_path: "code.editor.show_hidden_files",
         description: "Whether hidden files (dotfiles) are shown in the project explorer.",
     },
+    // Controls whether the project explorer starts at each terminal's working directory
+    // instead of the enclosing git repository root.
+    project_explorer_uses_working_directory: ProjectExplorerUsesWorkingDirectory {
+        type: bool,
+        default: false,
+        supported_platforms: SupportedPlatforms::ALL,
+        sync_to_cloud: SyncToCloud::Globally(RespectUserSyncSetting::Yes),
+        surface: settings::SettingSurfaces::GUI,
+        private: false,
+        toml_path: "code.editor.project_explorer_uses_working_directory",
+        description: "Whether the project explorer and global search start at the terminal's working directory instead of the git repository root. Applies to local sessions.",
+    },
     // Controls whether the language server reformats the file on save.
     format_on_save: FormatOnSave {
         type: bool,
