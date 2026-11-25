@@ -1472,7 +1472,7 @@ impl PaneGroup {
                 let pane_flex = 1. / panes.len() as f32;
 
                 let num_children = panes.len() as f32;
-                let total_divider_size = tree::get_divider_thickness() * (num_children - 1.);
+                let total_divider_size = tree::get_divider_thickness(ctx) * (num_children - 1.);
                 let view_size = match split_direction {
                     launch_config::SplitDirection::Vertical => vec2f(
                         view_size.x(),
@@ -1546,7 +1546,7 @@ impl PaneGroup {
                 let mut focus = InitialFocus::default();
 
                 let num_children = pane.children.len() as f32;
-                let total_divider_size = tree::get_divider_thickness() * (num_children - 1.);
+                let total_divider_size = tree::get_divider_thickness(ctx) * (num_children - 1.);
                 let view_size = match pane.direction {
                     app_state::SplitDirection::Vertical => vec2f(
                         view_size.x(),

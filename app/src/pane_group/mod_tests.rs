@@ -3337,7 +3337,7 @@ fn test_initial_widths_are_computed_correctly() {
                 pane_group_width,
                 "Pane with index 0 had unexpected width!"
             );
-            let half_width = (pane_group_width - tree::get_divider_thickness()) / 2.;
+            let half_width = (pane_group_width - tree::get_divider_thickness(ctx)) / 2.;
             for i in 1..=3 {
                 assert_eq!(
                     pane_group
@@ -3351,7 +3351,7 @@ fn test_initial_widths_are_computed_correctly() {
                     "Pane with index {i} had unexpected width!"
                 );
             }
-            let one_third_width = (pane_group_width - (2. * tree::get_divider_thickness())) / 3.;
+            let one_third_width = (pane_group_width - (2. * tree::get_divider_thickness(ctx))) / 3.;
             for i in 4..=6 {
                 assert_eq!(
                     pane_group
@@ -3368,7 +3368,8 @@ fn test_initial_widths_are_computed_correctly() {
 
             // Make assertions about the expected heights of the various
             // panes.
-            let one_third_height = (pane_group_height - (2. * tree::get_divider_thickness())) / 3.;
+            let one_third_height =
+                (pane_group_height - (2. * tree::get_divider_thickness(ctx))) / 3.;
             for i in (0..=1).chain(4..=6) {
                 assert_eq!(
                     pane_group
@@ -3382,7 +3383,8 @@ fn test_initial_widths_are_computed_correctly() {
                     "Pane with index {i} had unexpected height!"
                 );
             }
-            let one_sixth_height = (pane_group_height - (5. * tree::get_divider_thickness())) / 6.;
+            let one_sixth_height =
+                (pane_group_height - (5. * tree::get_divider_thickness(ctx))) / 6.;
             for i in 2..=3 {
                 assert_eq!(
                     pane_group
