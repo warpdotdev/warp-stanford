@@ -408,6 +408,8 @@ fn test_programming_language_to_extension() {
         ("containerfile", "dockerfile"),
         ("markdown", "md"),
         ("md", "md"),
+        ("erb", "erb"),
+        ("eruby", "erb"),
     ];
     for (token, expected_extension) in cases {
         let language = ProgrammingLanguage::from((*token).to_string());

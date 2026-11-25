@@ -1,5 +1,8 @@
+mod erb;
+
 use std::borrow::Cow;
 use std::collections::HashMap;
+use std::ops::Range;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
@@ -18,7 +21,7 @@ lazy_static! {
     static ref LANGUAGE_REGISTRY: LanguageRegistry = LanguageRegistry::new();
 }
 
-pub const SUPPORTED_LANGUAGES: [&str; 35] = [
+pub const SUPPORTED_LANGUAGES: [&str; 36] = [
     "rust",
     "golang",
     "yaml",
@@ -54,6 +57,7 @@ pub const SUPPORTED_LANGUAGES: [&str; 35] = [
     "dockerfile",
     "nix",
     "markdown",
+    "erb",
 ];
 
 /// Registry that holds all of the supported languages.
@@ -76,15 +80,30 @@ impl LanguageRegistry {
         }
 
         let mut languages = self.languages.lock().expect("Mutex should not be poisoned");
-
-        if let Some(lang) = languages.get(name) {
-            return Some(lang.clone());
-        }
-
-        let language = Arc::new(load_language(name)?);
-        languages.insert(name.to_string(), language.clone());
-        Some(language)
+        get_or_load_language(&mut languages, name)
     }
+}
+
+/// Returns the cached language, loading it first if this is its first use. A language that
+/// embeds another one loads that language through the same cache.
+fn get_or_load_language(
+    languages: &mut HashMap<String, Arc<Language>>,
+    name: &str,
+) -> Option<Arc<Language>> {
+    if let Some(lang) = languages.get(name) {
+        return Some(lang.clone());
+    }
+
+    let mut language = load_language(name)?;
+    if let Some((embedded_name, find_tags)) = embedded_language(name) {
+        language.embedded = Some(EmbeddedLanguage {
+            language: get_or_load_language(languages, embedded_name)?,
+            find_tags,
+        });
+    }
+    let language = Arc::new(language);
+    languages.insert(name.to_string(), language.clone());
+    Some(language)
 }
 
 /// Find the corresponding language entry by a standardized filename.
@@ -118,6 +137,7 @@ fn normalize_language_name(name: &str) -> &str {
         "kt" => "kotlin",
         "docker" | "containerfile" => "dockerfile",
         "md" => "markdown",
+        "eruby" => "erb",
         other => other,
     }
 }
@@ -196,6 +216,7 @@ fn language_by_filename_parts(
         "vue" => language_by_name("vue"),
         "dockerfile" => language_by_name("dockerfile"),
         "md" | "markdown" => language_by_name("markdown"),
+        "erb" => language_by_name("erb"),
         _ => None,
     }
 }
@@ -219,6 +240,29 @@ pub struct Language {
     pub symbols_query: Option<Query>,
     /// Display name for the language.
     pub display_name: String,
+    /// The language embedded in this one, if it is a template language.
+    pub embedded: Option<EmbeddedLanguage>,
+}
+
+/// A language written inside the tags of a template language, such as the Ruby in an ERB
+/// template. Everything outside the tags is in the template's own language.
+pub struct EmbeddedLanguage {
+    /// The language of the code inside the tags.
+    pub language: Arc<Language>,
+    pub find_tags: FindTags,
+}
+
+/// Finds the tags in a document. The tags are in document order and do not overlap.
+pub type FindTags = fn(&[u8]) -> Vec<EmbeddedTag>;
+
+/// One tag of a template language, such as `<%= user.name %>`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EmbeddedTag {
+    /// The bytes of the whole tag, delimiters included.
+    pub range: Range<usize>,
+    /// The bytes of the embedded code inside the tag. A tag has no code when it is empty or
+    /// when it is a comment.
+    pub code: Option<Range<usize>>,
 }
 
 impl Language {
@@ -252,7 +296,18 @@ fn to_arborium_name(lang: &str) -> &str {
         "jsx" => "javascript",
         "objective-c" => "objc",
         "sql" => "sql",
+        // An ERB template is HTML outside its tags.
+        "erb" => "html",
         other => other,
+    }
+}
+
+/// The language embedded in the tags of `lang` and the function that finds those tags, if
+/// `lang` is a template language.
+fn embedded_language(lang: &str) -> Option<(&'static str, FindTags)> {
+    match lang {
+        "erb" => Some(("ruby", erb::tags)),
+        _ => None,
     }
 }
 
@@ -294,6 +349,7 @@ fn get_arborium_highlight_query(lang: &str) -> Option<&str> {
         "vue" => Some(&arborium::lang_vue::HIGHLIGHTS_QUERY),
         "dockerfile" => Some(arborium::lang_dockerfile::HIGHLIGHTS_QUERY),
         "markdown" => Some(arborium::lang_markdown::HIGHLIGHTS_QUERY),
+        "erb" => Some(arborium::lang_html::HIGHLIGHTS_QUERY),
         _ => None,
     }
 }
@@ -335,6 +391,7 @@ fn load_language(lang: &str) -> Option<Language> {
         bracket_pairs,
         symbols_query,
         display_name: config.display_name,
+        embedded: None,
     })
 }
 
