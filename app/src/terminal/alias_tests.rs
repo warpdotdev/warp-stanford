@@ -33,6 +33,20 @@ fn test_is_expandable_alias_when_alias_value_is_empty() {
 }
 
 #[test]
+fn test_is_expandable_alias_on_space() {
+    assert!(is_expandable_alias_on_space("gco", "git checkout"));
+    assert!(is_expandable_alias_on_space("..", "cd .."));
+
+    // A leading `-` marks an option or list item, not a command.
+    assert!(!is_expandable_alias_on_space("-", "cd -"));
+    assert!(!is_expandable_alias_on_space("--", "cd -2"));
+
+    // The base expandability rules still apply.
+    assert!(!is_expandable_alias_on_space("ls", "ls -G"));
+    assert!(!is_expandable_alias_on_space("ls", ""));
+}
+
+#[test]
 fn test_check_for_alias_has_alias() {
     let alias: SmolStr = "gco".into();
     let alias_value: String = "git checkout".into();
