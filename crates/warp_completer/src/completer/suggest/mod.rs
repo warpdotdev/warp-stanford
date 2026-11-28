@@ -14,6 +14,7 @@ pub use priority::Priority;
 use smol_str::SmolStr;
 use warp_command_signatures::IconType;
 use warp_core::ui::theme::AnsiColorIdentifier;
+use warp_util::path::ShellFamily;
 
 use super::EngineFileType;
 use super::coalesce::coalesce_completion_results;
@@ -331,9 +332,11 @@ impl SuggestionResults {
         // e.g. If query is "a/b/c" then query_len will be 1 since we only take
         // "c" because it's after the last slash and it is 1 character long.
         let original_query_len = query.chars().count();
-        let file_query = query
+        // A leading quote is shell syntax, not part of the file name in `display`.
+        let unquoted_query = query.strip_prefix(['\'', '"']).unwrap_or(query);
+        let file_query = unquoted_query
             .rsplit_once(path_separators)
-            .map_or(query, |(_, after_last_slash)| after_last_slash);
+            .map_or(unquoted_query, |(_, after_last_slash)| after_last_slash);
         let file_query_len = file_query.chars().count();
 
         for suggestion in self.suggestions.iter() {
@@ -676,7 +679,7 @@ async fn suggestions_internal<'a>(
     if options.suggest_file_path_completions_only {
         let path_completion_context = ctx.path_completion_context()?;
         let classified_command = &classified_command?;
-        let path_completions = engine::path::sorted_paths_relative_to(
+        let mut path_completions = engine::path::sorted_paths_relative_to(
             &classified_command.command.last_token(),
             options.match_strategy,
             path_completion_context,
@@ -685,6 +688,7 @@ async fn suggestions_internal<'a>(
         if path_completions.is_empty() {
             return None;
         }
+        keep_opening_quote(&mut path_completions, replacement_span.slice(line), ctx);
         return Some(SuggestionResults {
             suggestions: path_completions,
             replacement_span,
@@ -720,7 +724,8 @@ async fn suggestions_internal<'a>(
     )
     .await;
 
-    let suggestions = coalesce_completion_results(completion_results_by_type);
+    let mut suggestions = coalesce_completion_results(completion_results_by_type);
+    keep_opening_quote(&mut suggestions, replacement_span.slice(line), ctx);
 
     // Although we don't order the exact match and fuzzy completions here,
     // we do order them in filter_by_query which we run right after running the
@@ -732,6 +737,110 @@ async fn suggestions_internal<'a>(
         replacement_span,
         match_strategy: options.match_strategy,
     })
+}
+
+/// Returns the byte offset where a completion inserted over `replacement_start..cursor_end` should
+/// stop replacing. When the replaced token opens a quote and `inserted` closes it, the range also
+/// covers a closing quote right after the cursor, such as one the editor auto-inserted. A partial
+/// prefix or a directory keeps the quote open, so it still needs that quote.
+pub fn completion_replacement_end(
+    buffer_text: &str,
+    replacement_start: usize,
+    cursor_end: usize,
+    inserted: &str,
+) -> usize {
+    match quote_closed_after_cursor(buffer_text, replacement_start, cursor_end) {
+        Some(quote)
+            if inserted.len() > 1 && inserted.starts_with(quote) && inserted.ends_with(quote) =>
+        {
+            cursor_end + 1
+        }
+        Some(_) | None => cursor_end,
+    }
+}
+
+/// Returns the quote that the token at `replacement_start..cursor_end` opens without closing, when
+/// the same quote follows the cursor.
+pub fn quote_closed_after_cursor(
+    buffer_text: &str,
+    replacement_start: usize,
+    cursor_end: usize,
+) -> Option<char> {
+    let replaced_token = buffer_text.get(replacement_start..cursor_end)?;
+    unclosed_opening_quote(replaced_token)
+        .filter(|quote| buffer_text[cursor_end..].starts_with(*quote))
+}
+
+/// Returns the quote that `token` opens without closing.
+fn unclosed_opening_quote(token: &str) -> Option<char> {
+    token
+        .chars()
+        .next()
+        .filter(|quote| matches!(quote, '\'' | '"'))
+        .filter(|quote| !token[1..].contains(*quote))
+}
+
+/// When `token` opens a quote it does not close, rewrites file suggestions to keep that quote,
+/// because the replacement span includes it.
+fn keep_opening_quote(
+    suggestions: &mut [MatchedSuggestion],
+    token: &str,
+    ctx: &dyn CompletionContext,
+) {
+    let Some(quote) = unclosed_opening_quote(token) else {
+        return;
+    };
+    let Some(path_completion_context) = ctx.path_completion_context() else {
+        return;
+    };
+    let shell_family = path_completion_context.shell_family();
+    let separators = path_completion_context.path_separators().all;
+    for matched in suggestions.iter_mut() {
+        let suggestion = &mut matched.suggestion;
+        if suggestion.file_type.is_none() {
+            continue;
+        }
+        if let Some(replacement) =
+            quoted_replacement(&suggestion.replacement, quote, shell_family, separators)
+        {
+            suggestion.replacement = replacement.into();
+        }
+    }
+}
+
+/// Returns `replacement` inside `quote`, or `None` when the quote cannot hold it. The quote stays
+/// open after a directory so that completion can continue inside it.
+fn quoted_replacement(
+    replacement: &str,
+    quote: char,
+    shell_family: ShellFamily,
+    separators: &[char],
+) -> Option<String> {
+    // POSIX quotes disable `~` expansion, and single quotes disable `$` expansion in every shell.
+    if replacement.starts_with(['~', '$']) {
+        return None;
+    }
+    let raw = shell_family.unescape(replacement);
+    if raw.contains(quote_breaking_chars(shell_family, quote)) {
+        return None;
+    }
+    let mut quoted = format!("{quote}{raw}");
+    if !raw.ends_with(separators) {
+        quoted.push(quote);
+    }
+    Some(quoted)
+}
+
+/// Returns the characters that end `quote` or keep a special meaning inside it.
+fn quote_breaking_chars(shell_family: ShellFamily, quote: char) -> &'static [char] {
+    // Fish reads `\\` and `\'` as escapes inside single quotes. PowerShell also ends a string at
+    // typographic quotes.
+    match (shell_family, quote == '\'') {
+        (ShellFamily::Posix, true) => &['\'', '\\'],
+        (ShellFamily::Posix, false) => &['"', '$', '`', '\\', '!'],
+        (ShellFamily::PowerShell, true) => &['\'', '\u{2018}', '\u{2019}', '\u{201A}', '\u{201B}'],
+        (ShellFamily::PowerShell, false) => &['"', '$', '`', '\u{201C}', '\u{201D}', '\u{201E}'],
+    }
 }
 
 #[cfg(test)]

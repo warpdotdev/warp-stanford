@@ -137,6 +137,7 @@ pub struct MockPathCompletionContext {
     cdpath: Option<String>,
     pwd: TypedPathBuf,
     directory_to_entries: HashMap<PathBuf, Vec<EngineDirEntry>>,
+    shell_family: ShellFamily,
 }
 
 impl MockPathCompletionContext {
@@ -146,7 +147,13 @@ impl MockPathCompletionContext {
             cdpath: None,
             pwd,
             directory_to_entries: HashMap::new(),
+            shell_family: ShellFamily::Posix,
         }
+    }
+
+    pub fn with_shell_family(mut self, shell_family: ShellFamily) -> Self {
+        self.shell_family = shell_family;
+        self
     }
 
     pub fn with_home_directory(mut self, home_directory: String) -> Self {
@@ -226,7 +233,7 @@ impl PathCompletionContext for MockPathCompletionContext {
     }
 
     fn shell_family(&self) -> ShellFamily {
-        ShellFamily::Posix
+        self.shell_family
     }
 
     fn home_directory(&self) -> Option<&str> {

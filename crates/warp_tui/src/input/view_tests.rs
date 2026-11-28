@@ -1069,6 +1069,84 @@ fn completion_can_append_a_space_at_buffer_end() {
 }
 
 #[test]
+fn quoted_completion_consumes_closing_quote_after_cursor() {
+    App::test((), |mut app| async move {
+        app.update(|ctx| {
+            let view = build_view(ctx);
+            type_str(&view, ctx, "!");
+            view.update(ctx, |view, ctx| view.set_text("ls 'one' tail", ctx));
+            let applied = view.update(ctx, |view, ctx| {
+                view.apply_shell_completion(
+                    TuiCompletionAcceptance {
+                        replacement: "'one two'".to_owned(),
+                        replacement_range: 3..7,
+                        append_space: false,
+                    },
+                    ctx,
+                )
+            });
+
+            assert!(applied);
+            assert_eq!(text(&view, ctx), "ls 'one two' tail");
+
+            view.update(ctx, |view, ctx| view.set_text("ls 'one'", ctx));
+            let applied = view.update(ctx, |view, ctx| {
+                view.apply_shell_completion(
+                    TuiCompletionAcceptance {
+                        replacement: "'one two'".to_owned(),
+                        replacement_range: 3..7,
+                        append_space: false,
+                    },
+                    ctx,
+                )
+            });
+
+            assert!(applied);
+            assert_eq!(text(&view, ctx), "ls 'one two' ");
+
+            view.update(ctx, |view, ctx| view.set_text("ls 'éc' tail", ctx));
+            let applied = view.update(ctx, |view, ctx| {
+                view.apply_shell_completion(
+                    TuiCompletionAcceptance {
+                        replacement: "'école x'".to_owned(),
+                        replacement_range: 3.."ls 'éc".len(),
+                        append_space: false,
+                    },
+                    ctx,
+                )
+            });
+
+            assert!(applied);
+            assert_eq!(text(&view, ctx), "ls 'école x' tail");
+        });
+    });
+}
+
+#[test]
+fn quoted_directory_completion_keeps_closing_quote_after_cursor() {
+    App::test((), |mut app| async move {
+        app.update(|ctx| {
+            let view = build_view(ctx);
+            type_str(&view, ctx, "!");
+            view.update(ctx, |view, ctx| view.set_text("ls 'dir'", ctx));
+            let applied = view.update(ctx, |view, ctx| {
+                view.apply_shell_completion(
+                    TuiCompletionAcceptance {
+                        replacement: "'dir one/".to_owned(),
+                        replacement_range: 3..7,
+                        append_space: false,
+                    },
+                    ctx,
+                )
+            });
+
+            assert!(applied);
+            assert_eq!(text(&view, ctx), "ls 'dir one/'");
+        });
+    });
+}
+
+#[test]
 fn input_escape_context_is_present_only_while_escape_is_handled() {
     let closed = input_keymap_context(InputKeymapContextConfig::default());
     assert!(closed.set.contains("TuiInputView"));
